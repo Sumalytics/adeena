@@ -55,6 +55,7 @@ export function presentPlayer(session: PlayerSession, presentation: ExperiencePr
     illustration,
     notice: session.notice,
     busy: session.busy,
+    revision: session.state.revision,
   };
 }
 

@@ -83,7 +83,13 @@ export type PlayerView =
       illustration: IllustrationCue;
       notice: string | null;
       busy: boolean;
+      revision: number;
     };
+
+export type SceneChoice = {
+  id: string;
+  text: string;
+};
 
 export type SceneVisualProps = {
   sceneId: string;
@@ -91,6 +97,13 @@ export type SceneVisualProps = {
   description: string;
   decorative: boolean;
   missing: boolean;
+  /** Present when the screen can offer the current choices to a visual world. */
+  choices?: readonly SceneChoice[];
+  /** Variable ids already shown to the learner. The renderer does not score them. */
+  variables?: Readonly<Record<string, number>>;
+  completed?: boolean;
+  revision?: number;
+  onChoose?: (choiceId: string) => void;
 };
 
 export type RendererKind = "css" | "phaser" | "rive";

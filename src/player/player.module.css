@@ -59,6 +59,41 @@
   height: auto;
 }
 
+.world {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 3 / 2;
+  margin: 0 0 1rem;
+  background: #f3e4cf;
+  overflow: hidden;
+  touch-action: manipulation;
+}
+
+.world canvas {
+  display: block;
+  width: 100% !important;
+  height: 100% !important;
+}
+
+.worldCaption {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.roomLink {
+  display: inline-block;
+  margin: 0.5rem 0 0;
+  color: var(--forest-deep);
+  font-weight: 700;
+}
+
 .fallback {
   display: grid;
   place-items: center;
@@ -186,5 +221,9 @@
 @media (prefers-reduced-motion: reduce) {
   .scene {
     animation: none;
+  }
+
+  .world canvas {
+    transition: none;
   }
 }

@@ -60,6 +60,11 @@ export function PlayerScreen({
           description={view.illustration.description}
           decorative={view.illustration.decorative}
           missing={view.illustration.missing}
+          choices={view.choices.map((choice) => ({ id: choice.id, text: choice.label }))}
+          variables={Object.fromEntries(view.meters.map((meter) => [meter.id, meter.value]))}
+          completed={view.kind === "ending"}
+          revision={view.revision}
+          onChoose={onChoose}
         />
         <h2 id="scene-heading" className={styles.sceneTitle} tabIndex={-1} ref={headingRef}>
           {view.sceneTitle}
@@ -96,6 +101,7 @@ export function PlayerScreen({
                 key={choice.id}
                 type="button"
                 className={styles.choice}
+                data-choice={choice.id}
                 disabled={view.busy}
                 onClick={() => onChoose(choice.id)}
               >

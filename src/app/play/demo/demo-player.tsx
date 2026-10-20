@@ -13,6 +13,11 @@ export function DemoPlayer() {
       <Link className={styles.home} href="/">
         adeena
       </Link>
+      <p>
+        <Link className={styles.roomLink} href="/play/world" prefetch={false}>
+          Open the resource room
+        </Link>
+      </p>
       <PlayerApp manifest={sharedShelf} presentation={sharedShelfPresentation} renderer={sharedShelfRenderer} />
     </div>
   );
