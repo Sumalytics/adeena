@@ -1,0 +1,52 @@
+:root {
+  --forest: #176345;
+  --forest-deep: #103e2f;
+  --orange: #ed9343;
+  --cream: #fbf9f1;
+  --ink: #173329;
+  --line: rgba(23, 51, 41, 0.16);
+  --surface: #ffffff;
+}
+
+html {
+  height: 100%;
+}
+
+body {
+  min-height: 100%;
+  margin: 0;
+  color: var(--ink);
+  background: var(--cream);
+  font-family: "Segoe UI", system-ui, sans-serif;
+  line-height: 1.5;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+a {
+  color: var(--forest-deep);
+}
+
+a:hover {
+  color: var(--forest);
+}
+
+:focus-visible {
+  outline: 3px solid var(--orange);
+  outline-offset: 2px;
+}
+
+.skip {
+  position: absolute;
+  left: 1rem;
+  top: -3rem;
+  background: var(--forest-deep);
+  color: var(--cream);
+  padding: 0.5rem 0.75rem;
+}
+
+.skip:focus {
+  top: 1rem;
+}

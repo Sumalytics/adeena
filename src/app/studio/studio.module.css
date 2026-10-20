@@ -1,0 +1,190 @@
+.shell {
+  max-width: 46rem;
+  margin: 0 auto;
+  padding: 1.5rem 1.25rem 3rem;
+}
+
+.brand {
+  margin: 0;
+  font-family: Palatino, "Palatino Linotype", Georgia, serif;
+  font-size: 1.35rem;
+  color: var(--forest);
+  text-decoration: none;
+}
+
+.header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+}
+
+.kicker {
+  margin: 0;
+  color: var(--forest);
+  font-size: 0.85rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.title {
+  margin: 0.25rem 0 0;
+  font-family: Palatino, "Palatino Linotype", Georgia, serif;
+  font-size: 2.25rem;
+  font-weight: 500;
+  line-height: 1.15;
+  color: var(--forest-deep);
+}
+
+.steps {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.5rem;
+  margin: 1.5rem 0;
+  padding: 0;
+  list-style: none;
+}
+
+.steps li {
+  margin: 0;
+  padding-top: 0.45rem;
+  border-top: 3px solid var(--line);
+  color: var(--ink);
+  font-size: 0.9rem;
+}
+
+.steps li[aria-current="step"] {
+  border-top-color: var(--orange);
+  font-weight: 600;
+}
+
+.panel {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  padding: 1rem;
+  margin-bottom: 1rem;
+}
+
+.panel h2 {
+  margin: 0 0 0.5rem;
+  font-family: Palatino, "Palatino Linotype", Georgia, serif;
+  font-size: 1.5rem;
+  font-weight: 500;
+  color: var(--forest-deep);
+}
+
+.field label,
+.choice,
+.panel legend {
+  display: block;
+  font-weight: 600;
+  margin-bottom: 0.35rem;
+}
+
+.choice {
+  display: flex;
+  font-weight: 400;
+}
+
+.field {
+  margin-bottom: 1rem;
+}
+
+.field input,
+.field select,
+.field textarea {
+  width: 100%;
+  font: inherit;
+  color: var(--ink);
+  background: var(--cream);
+  border: 1px solid var(--line);
+  padding: 0.6rem 0.7rem;
+}
+
+.field textarea {
+  min-height: 7rem;
+  resize: vertical;
+}
+
+.hint {
+  margin: 0.35rem 0 0;
+  color: var(--forest-deep);
+  font-size: 0.92rem;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+
+.actions button {
+  font: inherit;
+  background: var(--forest-deep);
+  color: var(--cream);
+  border: 0;
+  padding: 0.7rem 1rem;
+  min-height: 2.75rem;
+  cursor: pointer;
+}
+
+.actions button:hover {
+  background: var(--forest);
+}
+
+.actions button:disabled {
+  background: #8aa396;
+  color: var(--cream);
+  cursor: not-allowed;
+}
+
+.choice {
+  display: flex;
+  gap: 0.6rem;
+  align-items: flex-start;
+  font-weight: 400;
+  margin: 0.5rem 0;
+}
+
+.choice input {
+  margin-top: 0.3rem;
+  width: auto;
+}
+
+.notice,
+.block {
+  margin-top: 0.75rem;
+  padding: 0.75rem;
+  background: var(--cream);
+  border-left: 4px solid var(--forest);
+}
+
+.block {
+  border-left-color: var(--orange);
+}
+
+.block ul {
+  margin: 0.4rem 0 0;
+  padding-left: 1.1rem;
+}
+
+.panel fieldset {
+  border: 1px solid var(--line);
+  margin: 0 0 1rem;
+  padding: 0.75rem;
+}
+
+.panel fieldset:disabled {
+  opacity: 0.85;
+}
+
+@media (max-width: 640px) {
+  .steps {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .title {
+    font-size: 1.8rem;
+  }
+}
