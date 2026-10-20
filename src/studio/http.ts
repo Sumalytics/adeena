@@ -162,7 +162,10 @@ export function shareJob(raw: unknown): ApiResult {
     approval: job.approval,
     eduFails: job.eduFails,
   });
-  const reasons = decision.reasons;
+  const reasons =
+    decision.allowed || decision.reasons.length === 0
+      ? ["Publication is not enabled in this synthetic demo."]
+      : decision.reasons;
   job.events.push({
     name: "studio.share_blocked",
     jobId: parsed.data.jobId,

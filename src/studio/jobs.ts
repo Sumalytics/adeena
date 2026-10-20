@@ -37,6 +37,11 @@ export type StoredJob = {
   events: StudioEvent[];
 };
 
+/**
+ * Process-local demo index. A matching idempotency key replays the first job
+ * in this process only. The maps are empty after exit and are not shared
+ * across instances, workers, or restarts.
+ */
 const jobsByKey = new Map<string, StoredJob>();
 const jobsById = new Map<string, StoredJob>();
 

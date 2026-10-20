@@ -1,0 +1,160 @@
+/** Illustrative community-shelf scenario. Not approved educational source material. */
+export const sharedShelf = {
+  schema: "adeena.experience-manifest",
+  schemaVersion: "1",
+  experienceId: "10000000-0000-4000-8000-000000000001",
+  versionId: "10000000-0000-4000-8000-000000000002",
+  title: "Shared shelf",
+  locale: "en",
+  mechanics: ["branching-dialogue@1"],
+  initialSceneId: "ask",
+  state: {
+    variables: [
+      { id: "shared-tools", type: "integer", min: 0, max: 4, initial: 3 },
+      { id: "repairs", type: "integer", min: 0, max: 5, initial: 0 },
+      { id: "keepers", type: "integer", min: 0, max: 3, initial: 0 },
+    ],
+  },
+  assets: [{ id: "shelf-card", kind: "image", locator: "assets/shelf.svg" }],
+  sources: [
+    {
+      sourceId: "10000000-0000-4000-8000-000000000003",
+      locator: "synthetic:shared-shelf",
+      note: "Illustrative community scenario. Not approved educational source material.",
+    },
+  ],
+  events: { schemaVersion: "1" },
+  accessibility: { textAlternative: "provided", motion: "none" },
+  scenes: [
+    {
+      role: "dialogue",
+      id: "ask",
+      title: "At the shelf",
+      text: "A neighbor asks to borrow the shared drill for the afternoon.",
+      assetIds: ["shelf-card"],
+      required: true,
+      choices: [
+        {
+          id: "share-now",
+          text: "Hand over the drill and walk to the record card.",
+          effects: [{ type: "adjust", variableId: "shared-tools", delta: -1 }],
+          nextSceneId: "record",
+        },
+        {
+          id: "ask-purpose",
+          text: "Ask what they plan to mend.",
+          effects: [],
+          nextSceneId: "purpose",
+        },
+        {
+          id: "point-to-board",
+          text: "Point them to the community board first.",
+          effects: [],
+          nextSceneId: "board",
+        },
+      ],
+    },
+    {
+      role: "dialogue",
+      id: "purpose",
+      title: "What it is for",
+      text: "They want to tighten a loose chair before the evening meeting.",
+      assetIds: [],
+      required: true,
+      choices: [
+        {
+          id: "lend-for-repair",
+          text: "Lend the drill for that repair.",
+          effects: [
+            { type: "adjust", variableId: "shared-tools", delta: -1 },
+            { type: "adjust", variableId: "repairs", delta: 1 },
+          ],
+          nextSceneId: "record",
+        },
+        {
+          id: "offer-hand-tool",
+          text: "Offer a screwdriver and leave the drill on the shelf.",
+          effects: [],
+          nextSceneId: "hand-tool-ending",
+        },
+      ],
+    },
+    {
+      role: "dialogue",
+      id: "record",
+      title: "How to record it",
+      text: "The drill is leaving the shelf. The card and the keeper are both nearby.",
+      assetIds: ["shelf-card"],
+      required: true,
+      choices: [
+        {
+          id: "write-card",
+          text: "Write the borrower's name and a return day on the card.",
+          effects: [],
+          nextSceneId: "card-ending",
+        },
+        {
+          id: "tell-keeper",
+          text: "Tell the shelf keeper who has the drill.",
+          effects: [{ type: "adjust", variableId: "keepers", delta: 1 }],
+          nextSceneId: "keeper-ending",
+        },
+      ],
+    },
+    {
+      role: "dialogue",
+      id: "board",
+      title: "Community board",
+      text: "The board lists open requests. The shelf is still behind you.",
+      assetIds: [],
+      required: true,
+      choices: [
+        {
+          id: "post-request",
+          text: "Post the request and leave the drill in place.",
+          effects: [],
+          nextSceneId: "posted-ending",
+        },
+        {
+          id: "walk-back",
+          text: "Walk back to the shelf and continue the conversation.",
+          effects: [],
+          nextSceneId: "ask",
+        },
+      ],
+    },
+    {
+      role: "ending",
+      id: "card-ending",
+      title: "Card on the shelf",
+      text: "The card names the borrower and the return day. The drill is out.",
+      assetIds: ["shelf-card"],
+      required: true,
+    },
+    {
+      role: "ending",
+      id: "keeper-ending",
+      title: "Keeper knows",
+      text: "The shelf keeper knows who has the drill. No card was written.",
+      assetIds: [],
+      required: true,
+    },
+    {
+      role: "ending",
+      id: "hand-tool-ending",
+      title: "Hand tool",
+      text: "A screwdriver goes with the neighbor. The drill stays on the shelf.",
+      assetIds: [],
+      required: true,
+    },
+    {
+      role: "ending",
+      id: "posted-ending",
+      title: "Request posted",
+      text: "The request is on the community board. The drill stays on the shelf.",
+      assetIds: [],
+      required: true,
+    },
+  ],
+};
+
