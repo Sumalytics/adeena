@@ -7,3 +7,11 @@ export { LdbV1 } from "./ldb";
 export { PlayerV1 } from "./player";
 export { RevV1, planRevision } from "./rev";
 export { RiskV1, assessRisk } from "./risk";
+export {
+  ExtractionCost,
+  ExtractionResult,
+  KnowledgeCollection,
+  KnowledgeNode,
+  SourceDocumentVersion,
+  SourceSpan,
+} from "./source";
