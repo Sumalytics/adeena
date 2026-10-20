@@ -54,4 +54,5 @@ export const ROOM_MODULES = [
   "noticeboard",
   "side-chair",
   "keeper",
+  "resource-guide",
 ] as const;

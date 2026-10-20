@@ -6,6 +6,8 @@ import { WorldPlayer } from "@/app/play/world/world-player";
 import { presentPlayer } from "@/player/present";
 import { PlayerScreen } from "@/player/player-screen";
 import { createPlayerController } from "@/player/session";
+import { GUIDE_TEXTURES } from "@/player/character/asset";
+import { CHARACTER_POSES } from "@/player/character/poses";
 import { createShelfAdapter } from "./adapter";
 
 type Handler = () => void;
@@ -196,5 +198,204 @@ describe("resource room player", () => {
     expect(sceneHtml).toContain("Hand over the drill");
     expect(sceneHtml).toContain('aria-live="polite"');
     expect(sceneHtml).not.toContain("<canvas");
+  });
+});
+
+function rigEngine() {
+  const created: Array<{ key: string; angle: number }> = [];
+  const tweens: Array<{ stop(): void }> = [];
+  const destroyed: object[] = [];
+  const zones: Array<ReturnType<typeof fakeZone>> = [];
+  function sprite(key: string) {
+    const node = {
+      key,
+      angle: 0,
+      x: 0,
+      y: 0,
+      setOrigin() {
+        return this;
+      },
+      setDisplaySize() {
+        return this;
+      },
+      setFlipX() {
+        return this;
+      },
+      destroy() {
+        destroyed.push(node);
+      },
+    };
+    created.push(node);
+    return node;
+  }
+  function container(x: number, y: number) {
+    const node = {
+      x,
+      y,
+      angle: 0,
+      children: [] as Array<{ destroy(): void }>,
+      add(children: Array<{ destroy(): void }>) {
+        node.children.push(...children);
+      },
+      setDepth() {},
+      destroy() {
+        for (const child of node.children) child.destroy();
+        destroyed.push(node);
+      },
+    };
+    return node;
+  }
+  class Scene {
+    add = {
+      graphics: () => ({
+        clear() {},
+        fillStyle() {},
+        fillRect() {},
+        fillCircle() {},
+        fillRoundedRect() {},
+        lineStyle() {},
+        strokeRect() {},
+      }),
+      zone: () => {
+        const zone = fakeZone();
+        zones.push(zone);
+        return zone;
+      },
+      image: (_x: number, _y: number, key: string) => sprite(key),
+      container,
+    };
+    tweens = {
+      add(config: { targets: object }) {
+        const tween = {
+          targets: config.targets,
+          stop() {
+            const index = tweens.indexOf(tween);
+            if (index >= 0) tweens.splice(index, 1);
+          },
+        };
+        tweens.push(tween);
+        return tween;
+      },
+      killTweensOf() {},
+    };
+    textures = {
+      exists() {
+        return false;
+      },
+      remove() {},
+      addImage() {},
+    };
+    game = { canvas: { tabIndex: 0, setAttribute() {} } };
+  }
+  class Game {
+    constructor(config: { parent: { appendChild(node: { remove(): void }): void }; scene: { create: () => void } }) {
+      config.parent.appendChild({ remove() {} });
+      config.scene.create.call(new Scene());
+    }
+    destroy() {}
+  }
+  const parent = {
+    dataset: {} as DOMStringMap,
+    appendChild() {},
+  };
+  return {
+    engine: { AUTO: 0, Game, Scene, Scale: { FIT: 1, CENTER_BOTH: 1 } },
+    parent,
+    created,
+    tweens,
+    destroyed,
+    zones,
+  };
+}
+
+async function flush() {
+  await Promise.resolve();
+  await Promise.resolve();
+}
+
+describe("resource-room character", () => {
+  it("follows presentation cues, replays, and cleans up", async () => {
+    const fake = rigEngine();
+    const adapter = createShelfAdapter({
+      onIntent() {},
+      loadEngine: async () => fake.engine as never,
+      prepareCharacter: async () => {},
+    });
+    await adapter.mount(fake.parent as never);
+    adapter.render({ ...opening, reducedMotion: false, revision: 0 });
+    await flush();
+    expect(fake.parent.dataset.character).toBe("abena");
+    expect(fake.parent.dataset.characterReaction).toBe("greet");
+    expect(fake.parent.dataset.characterMotion).toBe("tween");
+    expect(fake.parent.dataset.characterFallback).toBe("sprite");
+    const leftArm = fake.created.find((node) => node.key === GUIDE_TEXTURES.arm);
+    expect(leftArm?.angle).toBe(CHARACTER_POSES.greet.leftArm);
+    const tweenCount = fake.tweens.length;
+    adapter.render({ ...opening, reducedMotion: false, revision: 0 });
+    expect(fake.tweens.length).toBe(tweenCount);
+
+    adapter.render({
+      ...opening,
+      sceneId: "card-ending",
+      choices: [],
+      completed: true,
+      reducedMotion: false,
+      revision: 2,
+    });
+    expect(fake.parent.dataset.characterReaction).toBe("celebrate");
+    expect(leftArm?.angle).toBe(CHARACTER_POSES.celebrate.leftArm);
+
+    adapter.render({ ...opening, reducedMotion: true, revision: 0 });
+    expect(fake.parent.dataset.characterReaction).toBe("greet");
+    expect(fake.parent.dataset.characterMotion).toBe("hold");
+    expect(fake.tweens).toHaveLength(0);
+
+    adapter.render({ ...opening, reducedMotion: false, revision: 3 });
+    expect(fake.parent.dataset.characterReaction).toBe("greet");
+    expect(leftArm?.angle).toBe(CHARACTER_POSES.greet.leftArm);
+    expect(fake.tweens.length).toBeGreaterThan(0);
+    adapter.destroy();
+    expect(fake.tweens).toHaveLength(0);
+    expect(fake.destroyed.length).toBeGreaterThan(0);
+  });
+
+  it("keeps the painted neighbor when the character asset fails", async () => {
+    const fake = rigEngine();
+    const intents: string[] = [];
+    const adapter = createShelfAdapter({
+      onIntent(intent) {
+        intents.push(intent.choiceId);
+      },
+      loadEngine: async () => fake.engine as never,
+      prepareCharacter: async () => {
+        throw new Error("character-asset-unavailable");
+      },
+    });
+    await adapter.mount(fake.parent as never);
+    adapter.render(opening);
+    await flush();
+    expect(fake.parent.dataset.characterFallback).toBe("painted");
+    expect(fake.created).toHaveLength(0);
+    fake.zones[0]?.press();
+    expect(intents).toEqual(["share-now"]);
+    adapter.destroy();
+  });
+
+  it("does not build a rig after unmount", async () => {
+    const fake = rigEngine();
+    let release: (() => void) | undefined;
+    const adapter = createShelfAdapter({
+      onIntent() {},
+      loadEngine: async () => fake.engine as never,
+      prepareCharacter: () =>
+        new Promise((resolve) => {
+          release = () => resolve();
+        }),
+    });
+    await adapter.mount(fake.parent as never);
+    adapter.destroy();
+    release?.();
+    await flush();
+    expect(fake.created).toHaveLength(0);
   });
 });

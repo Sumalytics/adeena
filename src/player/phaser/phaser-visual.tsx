@@ -67,6 +67,7 @@ export function PhaserShelfVisual({
       variables: props.variables ?? {},
       completed: props.completed === true,
       reducedMotion,
+      revision: props.revision ?? 0,
     });
   }, [props.sceneId, props.choices, props.variables, props.completed, props.revision, reducedMotion]);
 

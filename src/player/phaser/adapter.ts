@@ -1,3 +1,7 @@
+import { guideCharacter } from "@/player/character/asset";
+import { characterCue, characterCueChanged, type CharacterCue } from "@/player/character/reactions";
+import { createCharacterRig, type CharacterRig, type CharacterScene } from "@/player/character/rig";
+import { prepareGuideTextures, type TextureScene } from "@/player/character/textures";
 import { createChoiceLatch, createPulseGate } from "./choice-latch";
 import { paintResourceRoom, type RoomPainter } from "./room-paint";
 import { deriveShelfVisual, ROOM_SIZE, type ShelfObjectId } from "./shelf-view";
@@ -5,7 +9,7 @@ import type { ShelfViewInput } from "./shelf-view";
 
 export type VisualIntent = { type: "choose"; choiceId: string };
 
-export type ShelfRenderInput = ShelfViewInput & { reducedMotion: boolean };
+export type ShelfRenderInput = ShelfViewInput & { reducedMotion: boolean; revision?: number };
 
 type PhaserModule = typeof import("phaser");
 
@@ -61,9 +65,23 @@ function bindPainter(graphics: Phaser.GameObjects.Graphics): RoomPainter {
  * Visual adapter for one resource room.
  * It never imports player-core and never applies effects.
  */
+function canHostCharacter(room: Phaser.Scene) {
+  const host = room as Phaser.Scene & {
+    add: { image?: unknown };
+    tweens?: { add?: unknown };
+    textures?: { addImage?: unknown };
+  };
+  return (
+    typeof host.add?.image === "function" &&
+    typeof host.tweens?.add === "function" &&
+    typeof host.textures?.addImage === "function"
+  );
+}
+
 export function createShelfAdapter(options: {
   onIntent: (intent: VisualIntent) => void;
   loadEngine?: () => Promise<PhaserModule>;
+  prepareCharacter?: (scene: TextureScene) => Promise<void>;
 }): ShelfAdapter {
   const latch = createChoiceLatch();
   const pulses = createPulseGate();
@@ -77,6 +95,11 @@ export function createShelfAdapter(options: {
   let focused: string | null = null;
   let hovered: string | null = null;
   let latest: ShelfRenderInput | null = null;
+  let host: HTMLElement | null = null;
+  let rig: CharacterRig | null = null;
+  let appliedCue: CharacterCue | null = null;
+  let characterToken = 0;
+  let characterState: "pending" | "sprite" | "painted" = "painted";
 
   function allowed() {
     if (!latest) return new Set<string>();
@@ -94,7 +117,67 @@ export function createShelfAdapter(options: {
     if (!graphics || !latest) return;
     pulses.advance();
     graphics.clear();
-    paintResourceRoom(bindPainter(graphics), deriveShelfVisual(latest), activeObject());
+    paintResourceRoom(bindPainter(graphics), deriveShelfVisual(latest), activeObject(), {
+      neighbor: rig ? "sprite" : "painted",
+    });
+  }
+
+  function standFor(input: ShelfRenderInput) {
+    return deriveShelfVisual(input).focus === "board" ? 156 : 112;
+  }
+
+  function rememberCharacter(cue: CharacterCue) {
+    const dataset = host?.dataset;
+    if (!dataset) return;
+    dataset.character = guideCharacter.assetId;
+    dataset.characterReaction = cue.pose;
+    dataset.characterMotion = cue.motion;
+    dataset.characterFallback = rig ? "sprite" : characterState;
+  }
+
+  function syncCharacter(force: boolean) {
+    if (!latest) return;
+    const cue = characterCue({
+      sceneId: latest.sceneId,
+      reducedMotion: latest.reducedMotion,
+      revision: latest.revision ?? 0,
+      stand: standFor(latest),
+    });
+    rememberCharacter(cue);
+    if (!rig || (!force && !characterCueChanged(appliedCue, cue))) return;
+    rig.play(cue.pose, { motion: cue.motion, stand: cue.stand });
+    appliedCue = cue;
+  }
+
+  function releaseCharacter() {
+    characterToken += 1;
+    rig?.destroy();
+    rig = null;
+    appliedCue = null;
+  }
+
+  async function mountCharacter(room: Phaser.Scene) {
+    const token = characterToken;
+    if (!canHostCharacter(room)) {
+      characterState = "painted";
+      syncCharacter(true);
+      return;
+    }
+    characterState = "pending";
+    syncCharacter(false);
+    try {
+      await (options.prepareCharacter ?? prepareGuideTextures)(room as TextureScene);
+      if (destroyed || token !== characterToken) return;
+      rig = createCharacterRig(room as unknown as CharacterScene);
+      characterState = "sprite";
+      syncCharacter(true);
+      redraw();
+    } catch {
+      if (destroyed || token !== characterToken) return;
+      characterState = "painted";
+      rig = null;
+      syncCharacter(true);
+    }
   }
 
   function syncZones() {
@@ -133,6 +216,7 @@ export function createShelfAdapter(options: {
     graphics = room.add.graphics();
     ready = true;
     paint();
+    void mountCharacter(room);
     room.game.canvas.tabIndex = -1;
     room.game.canvas.setAttribute("aria-hidden", "true");
   }
@@ -148,6 +232,7 @@ export function createShelfAdapter(options: {
     },
     async mount(container) {
       if (destroyed) return;
+      host = container;
       if (container.dataset) container.dataset.stage = "loading";
       const load = options.loadEngine ?? loadPhaserScript;
       const Phaser = await load();
@@ -194,7 +279,10 @@ export function createShelfAdapter(options: {
     render(input) {
       latest = input;
       latch.reconcile();
-      if (ready) paint();
+      if (ready) {
+        paint();
+        syncCharacter(false);
+      }
     },
     setFocusedChoice(choiceId) {
       focused = choiceId;
@@ -203,6 +291,7 @@ export function createShelfAdapter(options: {
     destroy() {
       destroyed = true;
       ready = false;
+      releaseCharacter();
       latch.destroy();
       pulses.advance();
       for (const zone of zones) zone.destroy();

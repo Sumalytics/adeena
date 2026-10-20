@@ -34,6 +34,7 @@ export function paintResourceRoom(
   painter: RoomPainter,
   visual: ShelfVisualState,
   activeObject: ShelfObjectId | null,
+  options?: { neighbor?: "painted" | "sprite" },
 ) {
   const colors = ROOM_COLORS;
   painter.fill(colors.plaster);
@@ -130,7 +131,9 @@ export function paintResourceRoom(
     painter.circle(302, 50, 3);
   }
 
-  person(painter, visual.focus === "board" ? 196 : 112, 132, colors.shirt);
+  if (options?.neighbor !== "sprite") {
+    person(painter, visual.focus === "board" ? 196 : 112, 132, colors.shirt);
+  }
   person(painter, 312, 118, colors.wood);
   if (visual.keeperNotes > 0) {
     painter.fill(colors.paper);
