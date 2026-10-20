@@ -1,11 +1,5 @@
-:root {
-  --forest: #176345;
-  --forest-deep: #103e2f;
-  --orange: #ed9343;
-  --cream: #fbf9f1;
-  --ink: #173329;
-  --line: rgba(23, 51, 41, 0.16);
-  --surface: #ffffff;
+* {
+  box-sizing: border-box;
 }
 
 html {
@@ -17,12 +11,8 @@ body {
   margin: 0;
   color: var(--ink);
   background: var(--cream);
-  font-family: "Segoe UI", system-ui, sans-serif;
+  font-family: var(--adeena-font-body);
   line-height: 1.5;
-}
-
-* {
-  box-sizing: border-box;
 }
 
 a {
@@ -34,7 +24,7 @@ a:hover {
 }
 
 :focus-visible {
-  outline: 3px solid var(--orange);
+  outline: 3px solid var(--forest-deep);
   outline-offset: 2px;
 }
 
@@ -49,4 +39,18 @@ a:hover {
 
 .skip:focus {
   top: 1rem;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }

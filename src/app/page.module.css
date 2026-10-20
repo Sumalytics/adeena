@@ -6,7 +6,7 @@
 
 .brand {
   margin: 0 0 0.75rem;
-  font-family: Palatino, "Palatino Linotype", Georgia, serif;
+  font-family: var(--adeena-font-display);
   font-size: 1.5rem;
   letter-spacing: 0.01em;
   color: var(--forest);
@@ -14,7 +14,7 @@
 
 .title {
   margin: 0 0 1rem;
-  font-family: Palatino, "Palatino Linotype", Georgia, serif;
+  font-family: var(--adeena-font-display);
   font-size: 3rem;
   font-weight: 500;
   line-height: 1.1;
@@ -39,4 +39,14 @@
 .enter:hover {
   background: var(--forest);
   color: var(--cream);
+}
+
+@media (max-width: 640px) {
+  .main {
+    padding-top: 3.5rem;
+  }
+
+  .title {
+    font-size: 2.25rem;
+  }
 }

@@ -1,0 +1,29 @@
+/*
+  Adeena brand foundations.
+  Brand name: adeena.
+
+  Rubik and DM Sans are the approved families. Their font files are not in
+  this repository, so the stacks fall through to the system UI face.
+  Do not load either family from a CDN until an approved asset source exists.
+*/
+
+:root {
+  --adeena-color-forest: #176345;
+  --adeena-color-forest-deep: #103e2f;
+  --adeena-color-forest-mid: #277655;
+  --adeena-color-orange: #ed9343;
+  --adeena-color-cream: #fbf9f1;
+  --adeena-color-ink: #173329;
+
+  --adeena-font-display: "Rubik", "Segoe UI", system-ui, sans-serif;
+  --adeena-font-body: "DM Sans", "Segoe UI", system-ui, sans-serif;
+
+  --forest: var(--adeena-color-forest);
+  --forest-deep: var(--adeena-color-forest-deep);
+  --forest-mid: var(--adeena-color-forest-mid);
+  --orange: var(--adeena-color-orange);
+  --cream: var(--adeena-color-cream);
+  --ink: var(--adeena-color-ink);
+  --line: rgba(23, 51, 41, 0.16);
+  --surface: #ffffff;
+}
