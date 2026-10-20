@@ -1,7 +1,14 @@
 "use client";
 
 import Link from "next/link";
-import { useRef, useState } from "react";
+import { useReducer, useRef, useState } from "react";
+import {
+  AUDIENCE_OPTIONS,
+  canGeneratePreview,
+  initialStudioDraft,
+  previewPayload,
+  studioReducer,
+} from "./studio-form";
 import styles from "./studio.module.css";
 
 const STEPS = ["Choose / Upload", "Generate", "Preview", "Share"] as const;
@@ -14,8 +21,6 @@ const AGE_BANDS = [
   ["adult", "Adult"],
   ["unspecified", "Unspecified"],
 ] as const;
-
-type AgeBand = (typeof AGE_BANDS)[number][0];
 
 type Preview = {
   jobId: string;
@@ -32,27 +37,15 @@ type Preview = {
 
 export function StudioApp() {
   const idempotencyKey = useRef<string | null>(null);
-  const [sourceLabel, setSourceLabel] = useState("");
-  const [audienceLabel, setAudienceLabel] = useState("");
-  const [ageBand, setAgeBand] = useState<AgeBand | "">("");
-  const [fileNote, setFileNote] = useState("");
+  const [draft, dispatch] = useReducer(studioReducer<Preview>, undefined, initialStudioDraft);
   const [pending, setPending] = useState<"preview" | "score" | "share" | null>(null);
-  const [error, setError] = useState("");
-  const [preview, setPreview] = useState<Preview | null>(null);
-  const [optionId, setOptionId] = useState("");
-  const [scoreText, setScoreText] = useState("");
-  const [shareReasons, setShareReasons] = useState<string[] | null>(null);
+  const { sourceLabel, audienceLabel, ageBand, fileNote, error, preview, optionId, scoreText, shareReasons } = draft;
 
-  const ready = sourceLabel.trim().length > 0 && audienceLabel.trim().length > 0 && ageBand !== "";
+  const ready = canGeneratePreview(draft);
   const currentStep = shareReasons ? 3 : preview ? 2 : pending === "preview" ? 1 : 0;
 
-  function invalidatePreview() {
-    if (!preview) return;
-    setPreview(null);
-    setOptionId("");
-    setScoreText("");
-    setShareReasons(null);
-    idempotencyKey.current = null;
+  function rememberEdit() {
+    if (preview) idempotencyKey.current = null;
   }
 
   async function generate() {
@@ -60,29 +53,31 @@ export function StudioApp() {
     const key = idempotencyKey.current ?? crypto.randomUUID();
     idempotencyKey.current = key;
     setPending("preview");
-    setError("");
-    setScoreText("");
-    setShareReasons(null);
+    dispatch({ type: "reset-feedback" });
     try {
       const response = await fetch("/api/studio/preview", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          idempotencyKey: key,
-          source: { label: sourceLabel },
-          audience: { label: audienceLabel, ageBand },
-        }),
+        body: JSON.stringify(
+          previewPayload({
+            idempotencyKey: key,
+            sourceLabel,
+            audienceLabel,
+            ageBand,
+          }),
+        ),
       });
       const body = (await response.json()) as Preview & { error?: string; issues?: string[] };
       if (!response.ok) {
-        setPreview(null);
-        setError(body.issues?.join(" ") || "The preview could not be created.");
+        dispatch({
+          type: "preview-error",
+          message: body.issues?.join(" ") || "The preview could not be created.",
+        });
         return;
       }
-      setPreview(body);
-      setOptionId("");
+      dispatch({ type: "preview", preview: body });
     } catch {
-      setError("The preview request did not reach the studio.");
+      dispatch({ type: "preview-error", message: "The preview request did not reach the studio." });
     } finally {
       setPending(null);
     }
@@ -91,7 +86,7 @@ export function StudioApp() {
   async function score() {
     if (!preview || !optionId) return;
     setPending("score");
-    setError("");
+    dispatch({ type: "reset-feedback" });
     try {
       const response = await fetch("/api/studio/score", {
         method: "POST",
@@ -104,16 +99,17 @@ export function StudioApp() {
       });
       const body = (await response.json()) as { correct?: boolean; points?: number };
       if (!response.ok) {
-        setScoreText("That choice could not be scored.");
+        dispatch({ type: "score", text: "That choice could not be scored." });
         return;
       }
-      setScoreText(
-        body.correct
+      dispatch({
+        type: "score",
+        text: body.correct
           ? `That stays inside the source. ${body.points} point.`
           : "That adds something the source does not say. 0 points.",
-      );
+      });
     } catch {
-      setScoreText("Scoring did not reach the studio.");
+      dispatch({ type: "score", text: "Scoring did not reach the studio." });
     } finally {
       setPending(null);
     }
@@ -122,7 +118,7 @@ export function StudioApp() {
   async function share() {
     if (!preview) return;
     setPending("share");
-    setError("");
+    dispatch({ type: "reset-feedback" });
     try {
       const response = await fetch("/api/studio/share", {
         method: "POST",
@@ -130,9 +126,12 @@ export function StudioApp() {
         body: JSON.stringify({ jobId: preview.jobId }),
       });
       const body = (await response.json()) as { issues?: string[] };
-      setShareReasons(body.issues?.length ? body.issues : ["Sharing is blocked."]);
+      dispatch({
+        type: "share",
+        reasons: body.issues?.length ? body.issues : ["Sharing is blocked."],
+      });
     } catch {
-      setShareReasons(["The share request did not reach the studio."]);
+      dispatch({ type: "share", reasons: ["The share request did not reach the studio."] });
     } finally {
       setPending(null);
     }
@@ -144,13 +143,23 @@ export function StudioApp() {
         <Link className={styles.brand} href="/">
           adeena
         </Link>
-        <p className={styles.kicker}>Creator Studio</p>
+        <p className={styles.kicker}>
+          <span className={styles.mark} aria-hidden="true" />
+          Creator Studio
+        </p>
       </header>
       <main id="content">
         <h1 className={styles.title}>Make a preview</h1>
+        <p className={styles.lead}>
+          Choose a source, an audience, and an age band. Generate a preview before you share.
+        </p>
         <ol className={styles.steps} aria-label="Creator workflow">
           {STEPS.map((step, index) => (
-            <li key={step} aria-current={index === currentStep ? "step" : undefined}>
+            <li
+              key={step}
+              aria-current={index === currentStep ? "step" : undefined}
+              data-complete={index < currentStep ? "true" : undefined}
+            >
               {step}
             </li>
           ))}
@@ -172,8 +181,8 @@ export function StudioApp() {
               maxLength={500}
               required
               onChange={(event) => {
-                setSourceLabel(event.target.value);
-                invalidatePreview();
+                rememberEdit();
+                dispatch({ type: "source", value: event.target.value });
               }}
             />
             <p className={styles.hint}>
@@ -189,51 +198,64 @@ export function StudioApp() {
               onChange={(event) => {
                 const file = event.target.files?.[0];
                 if (!file) return;
+                rememberEdit();
                 if (sourceLabel.trim()) {
-                  setFileNote("The file stays on this device and was not uploaded. The source note was kept.");
+                  dispatch({
+                    type: "file",
+                    note: "The file stays on this device and was not uploaded. The source note was kept.",
+                  });
                 } else {
-                  setFileNote("The file stays on this device. Only its name was used as the source.");
-                  setSourceLabel(file.name);
+                  dispatch({
+                    type: "file",
+                    note: "The file stays on this device. Only its name was used as the source.",
+                    sourceLabel: file.name,
+                  });
                 }
-                invalidatePreview();
               }}
             />
             {fileNote ? <p className={styles.hint}>{fileNote}</p> : null}
           </div>
-          <div className={styles.field}>
-            <label htmlFor="audience">Audience</label>
-            <input
-              id="audience"
-              name="audience"
-              type="text"
-              value={audienceLabel}
-              maxLength={120}
-              required
-              onChange={(event) => {
-                setAudienceLabel(event.target.value);
-                invalidatePreview();
-              }}
-            />
-          </div>
-          <div className={styles.field}>
-            <label htmlFor="age-band">Age band</label>
-            <select
-              id="age-band"
-              name="age-band"
-              value={ageBand}
-              required
-              onChange={(event) => {
-                setAgeBand(event.target.value as AgeBand);
-                invalidatePreview();
-              }}
-            >
-              <option value="">Select an age band</option>
-              {AGE_BANDS.map(([value, label]) => (
-                <option key={value} value={value}>
-                  {label}
-                </option>
-              ))}
-            </select>
+          <div className={styles.pair}>
+            <div className={styles.field}>
+              <label htmlFor="audience">Audience</label>
+              <select
+                id="audience"
+                name="audience"
+                value={audienceLabel}
+                required
+                onChange={(event) => {
+                  rememberEdit();
+                  dispatch({ type: "audience", value: event.target.value });
+                }}
+              >
+                <option value="">Select an audience</option>
+                {AUDIENCE_OPTIONS.map((option) => (
+                  <option key={option} value={option}>
+                    {option}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className={styles.field}>
+              <label htmlFor="age-band">Age band</label>
+              <select
+                id="age-band"
+                name="age-band"
+                value={ageBand}
+                required
+                onChange={(event) => {
+                  rememberEdit();
+                  dispatch({ type: "age", value: event.target.value });
+                }}
+              >
+                <option value="">Select an age band</option>
+                {AGE_BANDS.map(([value, label]) => (
+                  <option key={value} value={value}>
+                    {label}
+                  </option>
+                ))}
+              </select>
+            </div>
           </div>
           <div className={styles.actions}>
             <button type="submit" disabled={!ready || pending !== null}>
@@ -260,7 +282,7 @@ export function StudioApp() {
                     name="choice"
                     value={option.id}
                     checked={optionId === option.id}
-                    onChange={() => setOptionId(option.id)}
+                    onChange={() => dispatch({ type: "option", id: option.id })}
                   />
                   <span>{option.label}</span>
                 </label>
