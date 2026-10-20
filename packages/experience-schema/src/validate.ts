@@ -6,6 +6,10 @@ const ASSET_LOCATOR =
   /^(synthetic:[a-z0-9][a-z0-9-]{0,40}|assets\/[a-z0-9][a-z0-9-]*\.(svg|png|webp|mp3|wav|vtt|txt))$/;
 const SOURCE_LOCATOR = /^synthetic:[a-z0-9][a-z0-9-]{0,60}$/;
 
+type Dialogue = Extract<ExperienceManifest["scenes"][number], { role: "dialogue" }>;
+type Effect = Dialogue["choices"][number]["effects"][number];
+type Variable = ExperienceManifest["state"]["variables"][number];
+
 export function zodDiagnostics(issues: readonly $ZodIssue[]): Diagnostic[] {
   return issues.map((issue) => {
     const path = issue.path.filter(
@@ -26,6 +30,9 @@ export function zodDiagnostics(issues: readonly $ZodIssue[]): Diagnostic[] {
     if (path[0] === "events") {
       return diagnostic("events.unsupported-version", path, issue.message);
     }
+    if (path[0] === "runtime") {
+      return diagnostic("runtime.unsupported", path, issue.message);
+    }
     if (path.includes("effects") && (issue.code === "invalid_union" || issue.code === "invalid_value")) {
       return diagnostic("state.effect-unsupported", path, issue.message);
     }
@@ -34,6 +41,34 @@ export function zodDiagnostics(issues: readonly $ZodIssue[]): Diagnostic[] {
     }
     return diagnostic("schema.invalid", path, issue.message);
   });
+}
+
+/**
+ * Allowlisted adjust/set steps only. A sequence is valid when at least one
+ * in-bounds start can apply every step without leaving the declared range.
+ * This is not an expression interpreter and does not walk the scene graph.
+ */
+function effectSequenceFits(variable: Variable, effects: readonly Effect[]) {
+  const span = variable.max - variable.min;
+  if (span < 0) return false;
+  const steps = effects.filter((effect) => effect.variableId === variable.id);
+  if (steps.length === 0) return true;
+  let open = Array.from({ length: span + 1 }, () => true);
+  for (const step of steps) {
+    const next = Array.from({ length: span + 1 }, () => false);
+    let any = false;
+    for (let offset = 0; offset <= span; offset += 1) {
+      if (!open[offset]) continue;
+      const value = variable.min + offset;
+      const updated = step.type === "set" ? step.value : value + step.delta;
+      if (updated < variable.min || updated > variable.max) continue;
+      next[updated - variable.min] = true;
+      any = true;
+    }
+    if (!any) return false;
+    open = next;
+  }
+  return true;
 }
 
 export function semanticDiagnostics(manifest: ExperienceManifest): Diagnostic[] {
@@ -64,16 +99,18 @@ export function semanticDiagnostics(manifest: ExperienceManifest): Diagnostic[] 
   const assetIds = new Set<string>();
   manifest.assets.forEach((asset, index) => {
     if (assetIds.has(asset.id)) {
-      diagnostics.push(diagnostic("asset.invalid", ["assets", index, "id"], `Asset ${asset.id} is duplicated`));
+      diagnostics.push(diagnostic("asset.duplicate", ["assets", index, "id"], `Asset ${asset.id} is duplicated`));
     }
     assetIds.add(asset.id);
-    if (!ASSET_LOCATOR.test(asset.locator) || asset.locator.includes("..")) {
-      diagnostics.push(diagnostic("asset.invalid", ["assets", index, "locator"], "Asset locator is not an allowlisted local reference"));
+    if (!ASSET_LOCATOR.test(asset.locator) || asset.locator.includes("..") || asset.locator.includes("\\")) {
+      diagnostics.push(
+        diagnostic("asset.invalid", ["assets", index, "locator"], "Asset locator is not an allowlisted local reference"),
+      );
     }
   });
 
   manifest.sources.forEach((source, index) => {
-    if (!SOURCE_LOCATOR.test(source.locator)) {
+    if (!SOURCE_LOCATOR.test(source.locator) || source.locator.includes("..") || source.locator.includes("\\")) {
       diagnostics.push(diagnostic("source.invalid", ["sources", index, "locator"], "Source locator must be a synthetic reference"));
     }
   });
@@ -92,7 +129,9 @@ export function semanticDiagnostics(manifest: ExperienceManifest): Diagnostic[] 
     const next: string[] = [];
     scene.assetIds.forEach((assetId, assetIndex) => {
       if (!assetIds.has(assetId)) {
-        diagnostics.push(diagnostic("asset.unknown", ["scenes", sceneIndex, "assetIds", assetIndex], `Unknown asset ${assetId}`));
+        diagnostics.push(
+          diagnostic("asset.unknown", ["scenes", sceneIndex, "assetIds", assetIndex], `Unknown asset ${assetId}`),
+        );
       }
     });
     if (scene.role === "ending") {
@@ -107,27 +146,68 @@ export function semanticDiagnostics(manifest: ExperienceManifest): Diagnostic[] 
       }
       choiceIds.add(choice.id);
       if (!indexById.has(choice.nextSceneId)) {
-        diagnostics.push(diagnostic("scene.transition-missing", [...choicePath, "nextSceneId"], `Scene ${choice.nextSceneId} does not exist`));
+        diagnostics.push(
+          diagnostic(
+            "scene.transition-missing",
+            [...choicePath, "nextSceneId"],
+            `Scene ${choice.nextSceneId} does not exist`,
+          ),
+        );
       } else {
         next.push(choice.nextSceneId);
       }
+      const illegalVariables = new Set<string>();
       choice.effects.forEach((effect, effectIndex) => {
         const variable = variables.get(effect.variableId);
         const effectPath = [...choicePath, "effects", effectIndex];
         if (!variable) {
-          diagnostics.push(diagnostic("state.unknown-variable", [...effectPath, "variableId"], `Unknown variable ${effect.variableId}`));
+          diagnostics.push(
+            diagnostic("state.unknown-variable", [...effectPath, "variableId"], `Unknown variable ${effect.variableId}`),
+          );
+          illegalVariables.add(effect.variableId);
+          return;
+        }
+        if (variable.min > variable.max) {
+          illegalVariables.add(variable.id);
           return;
         }
         if (effect.type === "adjust") {
           const span = variable.max - variable.min;
           if (effect.delta === 0 || Math.abs(effect.delta) > span) {
-            diagnostics.push(diagnostic("state.out-of-bounds", [...effectPath, "delta"], `Adjustment for ${variable.id} exceeds its declared span`));
+            diagnostics.push(
+              diagnostic(
+                "state.out-of-bounds",
+                [...effectPath, "delta"],
+                effect.delta === 0
+                  ? `Adjustment for ${variable.id} must be a non-zero integer`
+                  : `Adjustment for ${variable.id} exceeds its declared span`,
+              ),
+            );
+            illegalVariables.add(variable.id);
           }
         } else if (effect.value < variable.min || effect.value > variable.max) {
-          diagnostics.push(diagnostic("state.out-of-bounds", [...effectPath, "value"], `Value for ${variable.id} is outside its bounds`));
+          diagnostics.push(
+            diagnostic("state.out-of-bounds", [...effectPath, "value"], `Value for ${variable.id} is outside its bounds`),
+          );
+          illegalVariables.add(variable.id);
         }
       });
+      const checked = new Set<string>();
+      choice.effects.forEach((effect, effectIndex) => {
+        if (checked.has(effect.variableId) || illegalVariables.has(effect.variableId)) return;
+        checked.add(effect.variableId);
+        const variable = variables.get(effect.variableId);
+        if (!variable || effectSequenceFits(variable, choice.effects)) return;
+        diagnostics.push(
+          diagnostic(
+            "state.out-of-bounds",
+            [...choicePath, "effects", effectIndex],
+            `Effects on ${variable.id} cannot be applied inside its declared bounds`,
+          ),
+        );
+      });
     });
+    // Retry limits are recorded here and enforced by the gameplay engine.
     if (scene.retry) {
       if (!indexById.has(scene.retry.onExhaustedSceneId)) {
         diagnostics.push(
@@ -160,7 +240,7 @@ export function semanticDiagnostics(manifest: ExperienceManifest): Diagnostic[] 
       diagnostic(
         scene.required ? "scene.unreachable-required" : "scene.unreachable-optional",
         ["scenes", index, "id"],
-        `Scene ${scene.id} is not reachable from the initial scene`,
+        `Scene ${scene.id} is not structurally reachable from the initial scene`,
         scene.required ? "error" : "warning",
       ),
     );
@@ -168,7 +248,13 @@ export function semanticDiagnostics(manifest: ExperienceManifest): Diagnostic[] 
 
   const reachableEndings = endings.filter((scene) => reachable.has(scene.id));
   if (endings.length > 0 && reachableEndings.length === 0) {
-    diagnostics.push(diagnostic("ending.unreachable", ["scenes"], "No ending is reachable from the initial scene"));
+    diagnostics.push(
+      diagnostic(
+        "ending.unreachable",
+        ["scenes"],
+        "No ending is structurally reachable from the initial scene",
+      ),
+    );
   }
 
   const reachesEnding = reverseReachable(
@@ -176,15 +262,14 @@ export function semanticDiagnostics(manifest: ExperienceManifest): Diagnostic[] 
     outgoing,
   );
   for (const component of stronglyConnected([...indexById.keys()], outgoing)) {
-    const cyclic =
-      component.length > 1 || (outgoing.get(component[0]) ?? []).includes(component[0]);
+    const cyclic = component.length > 1 || (outgoing.get(component[0]) ?? []).includes(component[0]);
     if (!cyclic) continue;
     if (component.some((sceneId) => reachesEnding.has(sceneId))) continue;
     diagnostics.push(
       diagnostic(
         "graph.cycle-without-exit",
         ["scenes", indexById.get(component[0]) ?? 0, "id"],
-        "A cycle has no path to an ending and no bounded retry exit",
+        "A cycle has no structural path to an ending. A bounded retry counts only when its exit scene leads to an ending",
       ),
     );
   }
@@ -193,15 +278,7 @@ export function semanticDiagnostics(manifest: ExperienceManifest): Diagnostic[] 
 }
 
 function forwardReachable(start: string, outgoing: Map<string, string[]>) {
-  const seen = new Set<string>();
-  const queue = [start];
-  while (queue.length > 0) {
-    const sceneId = queue.pop()!;
-    if (seen.has(sceneId)) continue;
-    seen.add(sceneId);
-    for (const next of outgoing.get(sceneId) ?? []) queue.push(next);
-  }
-  return seen;
+  return forwardReachableFrom([start], outgoing);
 }
 
 function reverseReachable(goals: Set<string>, outgoing: Map<string, string[]>) {

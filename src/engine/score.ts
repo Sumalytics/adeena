@@ -12,7 +12,7 @@ export function scoreChoice(
   optionId: string,
 ): ScoreResult {
   const scene = manifest.scenes.find((item) => item.id === sceneId);
-  if (!scene || scene.interaction.type !== "choice") {
+  if (!scene || scene.interaction?.type !== "choice") {
     return { status: "unknown-scene" };
   }
   const option = scene.interaction.options.find((item) => item.id === optionId);

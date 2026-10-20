@@ -1,3 +1,5 @@
+import type { ExperienceManifest } from "./manifest";
+
 /** Illustrative community-shelf scenario. Not approved educational source material. */
 export const sharedShelf = {
   schema: "adeena.experience-manifest",
@@ -25,6 +27,12 @@ export const sharedShelf = {
   ],
   events: { schemaVersion: "1" },
   accessibility: { textAlternative: "provided", motion: "none" },
+  runtime: {
+    compatibility: "adeena.experience-runtime@1",
+    profile: "lightweight",
+    requiresLlm: false,
+    executableScripts: false,
+  },
   scenes: [
     {
       role: "dialogue",
@@ -156,5 +164,5 @@ export const sharedShelf = {
       required: true,
     },
   ],
-};
+} satisfies ExperienceManifest;
 
