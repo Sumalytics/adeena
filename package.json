@@ -10,7 +10,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "typecheck": "tsc --noEmit && tsc --noEmit -p packages/experience-schema",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p packages/experience-schema && tsc --noEmit -p packages/player-core",
     "test": "vitest run"
   },
   "dependencies": {

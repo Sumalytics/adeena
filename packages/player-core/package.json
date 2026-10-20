@@ -1,0 +1,15 @@
+{
+  "name": "@adeena/player-core",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@adeena/experience-schema": "0.1.0"
+  },
+  "devDependencies": {
+    "vitest": "^5.0.5"
+  }
+}
