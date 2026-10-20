@@ -41,6 +41,13 @@
   color: var(--cream);
 }
 
+.links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem 1.5rem;
+  align-items: center;
+}
+
 @media (max-width: 640px) {
   .main {
     padding-top: 3.5rem;

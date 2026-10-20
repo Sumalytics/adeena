@@ -1,0 +1,47 @@
+import { readFileSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import type { Sql } from "postgres";
+import { databaseFailure } from "./client";
+
+const directory = path.dirname(fileURLToPath(import.meta.url));
+const migrations = ["0001_ingestion", "0002_creator_workspace"] as const;
+
+function script(name: string) {
+  return readFileSync(path.join(directory, "migrations", name), "utf8");
+}
+
+export async function migrateUp(sql: Sql) {
+  try {
+    await sql`CREATE TABLE IF NOT EXISTS adeena_schema_migrations (
+      id text PRIMARY KEY,
+      applied_at timestamptz NOT NULL DEFAULT now()
+    )`;
+    await sql`REVOKE ALL ON TABLE adeena_schema_migrations FROM PUBLIC`;
+    const applied: string[] = [];
+    for (const id of migrations) {
+      const existing = await sql`SELECT id FROM adeena_schema_migrations WHERE id = ${id}`;
+      if (existing.length > 0) continue;
+      await sql.begin(async (tx) => {
+        await tx.unsafe(script(`${id}.up.sql`));
+        await tx`INSERT INTO adeena_schema_migrations (id) VALUES (${id})`;
+      });
+      applied.push(id);
+    }
+    return { ids: applied, applied: applied.length > 0 };
+  } catch (error) {
+    throw databaseFailure(error);
+  }
+}
+
+export async function migrateDown(sql: Sql) {
+  try {
+    await sql.begin(async (tx) => {
+      await tx.unsafe(script("0002_creator_workspace.down.sql"));
+      await tx.unsafe(script("0001_ingestion.down.sql"));
+      await tx`DROP TABLE IF EXISTS adeena_schema_migrations`;
+    });
+  } catch (error) {
+    throw databaseFailure(error);
+  }
+}

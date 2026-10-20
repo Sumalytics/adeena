@@ -1,0 +1,51 @@
+import { createServerClient } from "@supabase/ssr";
+import { NextResponse, type NextRequest } from "next/server";
+import { supabaseBrowserConfig } from "@/auth/public-config";
+
+export async function proxy(request: NextRequest) {
+  let response = NextResponse.next({ request });
+  const { url, key } = supabaseBrowserConfig();
+  const supabase = createServerClient(url, key, {
+    cookies: {
+      getAll() {
+        return request.cookies.getAll();
+      },
+      setAll(cookiesToSet) {
+        for (const { name, value } of cookiesToSet) request.cookies.set(name, value);
+        response = NextResponse.next({ request });
+        for (const { name, value, options } of cookiesToSet) response.cookies.set(name, value, options);
+      },
+    },
+  });
+
+  let user: { id: string } | null = null;
+  try {
+    const verified = await supabase.auth.getUser();
+    user = verified.data.user;
+  } catch {
+    user = null;
+  }
+
+  const path = request.nextUrl.pathname;
+  const creatorApi = path === "/api/creator" || path.startsWith("/api/creator/");
+  const creatorPage = path === "/creator" || path.startsWith("/creator/");
+  if ((creatorApi || creatorPage) && !user) {
+    if (creatorApi) {
+      const denied = NextResponse.json({ error: "unauthenticated" }, { status: 401 });
+      for (const cookie of response.cookies.getAll()) denied.cookies.set(cookie);
+      return denied;
+    }
+    const redirectUrl = request.nextUrl.clone();
+    redirectUrl.pathname = "/login";
+    redirectUrl.search = "";
+    redirectUrl.searchParams.set("next", "/creator");
+    const redirect = NextResponse.redirect(redirectUrl);
+    for (const cookie of response.cookies.getAll()) redirect.cookies.set(cookie);
+    return redirect;
+  }
+  return response;
+}
+
+export const config = {
+  matcher: ["/creator", "/creator/:path*", "/login", "/register", "/auth/:path*", "/api/creator", "/api/creator/:path*"],
+};

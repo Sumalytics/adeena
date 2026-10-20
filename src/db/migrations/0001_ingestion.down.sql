@@ -1,0 +1,11 @@
+DROP TABLE IF EXISTS source_processing_costs;
+DROP TABLE IF EXISTS knowledge_nodes;
+DROP TABLE IF EXISTS source_spans;
+DROP TABLE IF EXISTS knowledge_collections;
+DROP TABLE IF EXISTS extraction_results;
+DROP TABLE IF EXISTS extraction_jobs;
+DROP TABLE IF EXISTS source_document_versions;
+DROP TABLE IF EXISTS source_documents;
+DROP TABLE IF EXISTS workspace_memberships;
+DROP TABLE IF EXISTS workspaces;
+DROP SCHEMA IF EXISTS adeena CASCADE;

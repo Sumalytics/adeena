@@ -14,9 +14,13 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@supabase/ssr": "^0.12.7",
+    "@supabase/supabase-js": "^2.118.0",
+    "drizzle-orm": "^0.45.4",
     "next": "16.4.2",
     "pdfjs-dist": "^6.4.299",
     "phaser": "^4.2.1",
+    "postgres": "^3.4.9",
     "react": "19.3.0",
     "react-dom": "19.3.0",
     "zod": "^4.6.7"

@@ -10,9 +10,12 @@ export default function Home() {
         Start with a source and an audience. Generate a preview, then share
         only after rights and approval are clear.
       </p>
-      <Link className={styles.enter} href="/studio">
-        Open Creator Studio
-      </Link>
+      <div className={styles.links}>
+        <Link className={styles.enter} href="/studio">
+          Open Creator Studio
+        </Link>
+        <Link href="/login">Sign in</Link>
+      </div>
     </main>
   );
 }

@@ -1,0 +1,60 @@
+.form {
+  display: grid;
+  gap: 1rem;
+  max-width: 24rem;
+  margin-top: 1.5rem;
+}
+
+.form label {
+  display: grid;
+  gap: 0.35rem;
+  font-family: var(--adeena-font-display);
+}
+
+.form input {
+  font: inherit;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  padding: 0.65rem 0.75rem;
+  min-height: 2.75rem;
+}
+
+.form button,
+.secondary {
+  font: inherit;
+  background: var(--forest-deep);
+  color: var(--cream);
+  border: 0;
+  min-height: 2.75rem;
+  padding: 0.75rem 1rem;
+  cursor: pointer;
+}
+
+.form button:hover,
+.secondary:hover {
+  background: var(--forest);
+}
+
+.form button:disabled {
+  cursor: wait;
+  opacity: 0.7;
+}
+
+.alert,
+.note {
+  margin: 1rem 0 0;
+  max-width: 36rem;
+  padding: 0.75rem 1rem;
+  background: var(--surface);
+  border: 1px solid var(--line);
+}
+
+.steps {
+  margin: 0 0 1.5rem;
+  padding-left: 1.25rem;
+}
+
+.steps li {
+  margin: 0.25rem 0;
+}
