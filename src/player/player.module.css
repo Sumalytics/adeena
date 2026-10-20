@@ -1,0 +1,190 @@
+.frame {
+  max-width: 40rem;
+  margin: 0 auto;
+  padding: 1.25rem 1rem 0;
+}
+
+.home {
+  font-family: var(--adeena-font-display);
+  color: var(--forest);
+  text-decoration: none;
+  font-size: 1.35rem;
+}
+
+.shell {
+  max-width: 40rem;
+  margin: 0 auto;
+  padding: 1rem 1rem 3rem;
+  overflow-wrap: anywhere;
+}
+
+.title,
+.sceneTitle,
+.groupTitle {
+  font-family: var(--adeena-font-display);
+  color: var(--forest-deep);
+  line-height: 1.15;
+}
+
+.title {
+  margin: 0 0 0.75rem;
+  font-size: 2.25rem;
+  font-weight: 500;
+}
+
+.intro,
+.narrative,
+.progress,
+.meterList,
+.summaryList {
+  margin: 0 0 1rem;
+}
+
+.progress {
+  color: var(--forest);
+  font-weight: 700;
+}
+
+.visual,
+.fallback {
+  margin: 0 0 1rem;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  min-height: 9rem;
+}
+
+.visual svg {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.fallback {
+  display: grid;
+  place-items: center;
+  padding: 1rem;
+  color: var(--ink);
+  text-align: center;
+}
+
+.sceneTitle {
+  margin: 0 0 0.5rem;
+  font-size: 1.5rem;
+  font-weight: 500;
+}
+
+.sceneTitle:focus {
+  outline: 3px solid var(--forest-deep);
+  outline-offset: 2px;
+}
+
+.meterList,
+.summaryList {
+  padding-left: 1.15rem;
+}
+
+.consequence {
+  margin: 0 0 1rem;
+  padding: 0.85rem 1rem;
+  background: var(--forest-deep);
+  color: var(--cream);
+}
+
+.consequenceLabel {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  margin: 0 0 0.35rem;
+  font-weight: 700;
+}
+
+.mark {
+  width: 0.75rem;
+  height: 0.75rem;
+  background: var(--orange);
+  flex: none;
+}
+
+.consequence p {
+  margin: 0.35rem 0 0;
+}
+
+.groupTitle {
+  margin: 0 0 0.5rem;
+  font-size: 1.15rem;
+}
+
+.choices {
+  display: grid;
+  gap: 0.6rem;
+  margin-bottom: 1rem;
+}
+
+.begin,
+.replay,
+.choice {
+  min-height: 2.75rem;
+  padding: 0.75rem 1rem;
+  border: 0;
+  background: var(--forest-deep);
+  color: var(--cream);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.choice,
+.replay,
+.begin {
+  width: 100%;
+}
+
+.choice:hover,
+.begin:hover,
+.replay:hover {
+  background: var(--forest);
+  color: var(--cream);
+}
+
+.choice:disabled,
+.begin:disabled,
+.replay:disabled {
+  background: var(--forest-mid);
+  color: var(--cream);
+  cursor: not-allowed;
+}
+
+.notice {
+  margin: 0.75rem 0 0;
+  padding: 0.75rem;
+  background: var(--cream);
+  border-left: 4px solid var(--forest-deep);
+}
+
+.scene {
+  animation: player-arrive 180ms ease-out;
+}
+
+@keyframes player-arrive {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@media (max-width: 640px) {
+  .title {
+    font-size: 1.8rem;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .scene {
+    animation: none;
+  }
+}
