@@ -6,7 +6,7 @@ describe("creator topic controls", () => {
   it("asks for a recommendation without generating an experience", () => {
     const html = renderToStaticMarkup(
       <TopicExplorer
-        sources={[{ documentVersionId: "22222222-2222-4222-8222-222222222222", filename: "rivers.md", extractionStatus: "complete" }]}
+        sources={[{ documentVersionId: "22222222-2222-4222-8222-222222222222", filename: "rivers.md", extractionStatus: "complete", rightsStatus: "unverified", byteCount: 128 }]}
       />,
     );
     expect(html).toContain("Recommend a starting topic");

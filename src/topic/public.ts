@@ -5,6 +5,31 @@ export type ExtractedSourceSummary = {
   documentVersionId: string;
   filename: string;
   extractionStatus: "complete" | "partial" | "failed" | "pending";
+  rightsStatus: "unverified" | "cleared" | "blocked";
+  byteCount: number;
+};
+
+export type CreatorUploadView = {
+  documentVersionId: string;
+  filename: string;
+  byteCount: number;
+  rightsStatus: "unverified" | "cleared" | "blocked";
+  extractionStatus: "complete" | "partial" | "failed" | "pending" | "not-queued";
+  jobStatus: "queued" | "processing" | "complete" | "partial" | "failed" | null;
+  failureCode: string | null;
+  replayed: boolean;
+  spanCount: number;
+  issueCodes: string[];
+  cost: {
+    uploadedBytes: number;
+    storedBytes: number;
+    processedPages: number | null;
+    durationMs: number;
+    outcome: "complete" | "partial" | "failed";
+    aiGenerationAuthorized: false;
+  } | null;
+  generatesExperience: false;
+  aiGenerationAuthorized: false;
 };
 
 export type TopicCandidateView = {
@@ -30,6 +55,8 @@ export type TopicRecommendationView = {
     generatesExperience: false;
     experienceVersionId: null;
     aiGenerationAuthorized: false;
+    sensitivityScreen: "title-and-excerpt" | "not-run";
+    safetyClearance: "none" | "independent-validation";
     candidateCount: number;
     processedChars: number;
     durationMs: number;

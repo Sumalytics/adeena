@@ -5,7 +5,7 @@ import type { Sql } from "postgres";
 import { databaseFailure } from "./client";
 
 const directory = path.dirname(fileURLToPath(import.meta.url));
-const migrations = ["0001_ingestion", "0002_creator_workspace", "0003_membership_force", "0004_topic_recommendation"] as const;
+const migrations = ["0001_ingestion", "0002_creator_workspace", "0003_membership_force", "0004_topic_recommendation", "0005_experience_generation", "0006_experience_editing", "0007_edit_spend", "0008_free_development"] as const;
 
 function script(name: string) {
   return readFileSync(path.join(directory, "migrations", name), "utf8");
@@ -37,6 +37,10 @@ export async function migrateUp(sql: Sql) {
 export async function migrateDown(sql: Sql) {
   try {
     await sql.begin(async (tx) => {
+      await tx.unsafe(script("0008_free_development.down.sql"));
+      await tx.unsafe(script("0007_edit_spend.down.sql"));
+      await tx.unsafe(script("0006_experience_editing.down.sql"));
+      await tx.unsafe(script("0005_experience_generation.down.sql"));
       await tx.unsafe(script("0004_topic_recommendation.down.sql"));
       await tx.unsafe(script("0003_membership_force.down.sql"));
       await tx.unsafe(script("0002_creator_workspace.down.sql"));

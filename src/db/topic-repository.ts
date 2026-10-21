@@ -125,6 +125,8 @@ function present(run: RunRow, rows: CandidateRow[], offset: number, replayed: bo
       generatesExperience: false,
       experienceVersionId: null,
       aiGenerationAuthorized: false,
+      sensitivityScreen: asStringArray(run.reasons).includes("partial-sensitivity-screen") ? "title-and-excerpt" : "not-run",
+      safetyClearance: "none",
       candidateCount: run.candidateCount,
       processedChars: run.processedChars,
       durationMs: run.durationMs,
@@ -153,10 +155,13 @@ export async function listExtractedSources(sql: Sql, identity: VerifiedIdentity,
     const statusByVersion = new Map(results.map((row) => [row.documentVersionId, row.status]));
     return versions.map((version): ExtractedSourceSummary => {
       const status = statusByVersion.get(version.id);
+      const rights = version.rightsStatus;
       return {
         documentVersionId: version.id,
         filename: version.originalFilename,
         extractionStatus: status === "complete" || status === "partial" || status === "failed" ? status : "pending",
+        rightsStatus: rights === "cleared" || rights === "blocked" ? rights : "unverified",
+        byteCount: version.sizeBytes,
       };
     });
   });
@@ -321,7 +326,9 @@ async function storeRecommendation(input: {
       audienceLabel: input.audienceLabel,
       ageBand: input.ageBand,
       rightsStatus: rightsStatus(version.rightsStatus),
-      excerpts: new Map(spanRows.map((row) => [row.id, row.excerpt])),
+      // Rights clearance is not an independent safety clearance. None is stored.
+      safetyClearance: null,
+      excerpts: new Map(spanRows.map((row) => [row.id, row.excerpt.slice(0, 280)])),
       overrides: [...latestOverride.entries()].map(([nodeId, override]) => ({ nodeId, title: override.title })),
     });
     const durationMs = Math.max(0, Math.round(performance.now() - started));

@@ -30,7 +30,22 @@ export const TOPIC_RANKING = {
   lengths: { short: 80, eligible: 180, focusedMax: 4000, broad: 8000 },
 } as const;
 
-const SENSITIVE = /\b(diagnos(?:is|es|e)|dosage|prescription|vaccine|surgery|safeguarding|child protection|disciplinary|termination)\b/i;
+/**
+ * Keyword signals for headings and short excerpts. This is not a classifier
+ * and it does not read the rest of a source.
+ */
+export const SENSITIVITY_SCREEN = {
+  coverage: "title-and-excerpt",
+  excerptChars: 280,
+  comprehensive: false,
+} as const;
+
+const SENSITIVE = /\b(diagnos(?:is|es|e)|dosage|prescription|medication|clinical|vaccine|surgery|safeguarding|child protection|disciplinary|termination|regulated)\b/i;
+
+/** Same limited heading and excerpt screen used by topic recommendation. Not a safety clearance. */
+export function limitedSensitivityMatch(text: string) {
+  return SENSITIVE.test(text);
+}
 const UNSAFE = /<script|javascript:/i;
 
 export type TopicExtraction = {
@@ -48,6 +63,15 @@ export type TopicDecision = {
   reasons: TopicReasonCode[];
   sourceSpanIds: string[];
   processedChars: number;
+  sensitivityScreen: "title-and-excerpt" | "not-run";
+  safetyClearance: "none" | "independent-validation";
+  generationAuthorized: false;
+};
+
+export type IndependentSourceClearance = {
+  scope: "source";
+  method: "independent-validation";
+  reference: string;
 };
 
 type HeadingOverride = { nodeId: string; title: string };
@@ -98,6 +122,7 @@ function classify(input: {
   chars: number;
   extraction: TopicExtraction;
   flagged: boolean;
+  cleared: boolean;
   unsafe: boolean;
   corrected: boolean;
 }) {
@@ -121,7 +146,7 @@ function classify(input: {
   const tooBroadForALesson = input.method === "bounded-text" && input.chars > lengths.focusedMax;
   const blocked =
     input.unsafe ||
-    input.flagged ||
+    (input.flagged && !input.cleared) ||
     input.extraction.status !== "complete" ||
     tooBroadForALesson ||
     reasons.includes("ambiguous-structure") ||
@@ -165,7 +190,11 @@ function recommendationCopy(input: {
   const notes: string[] = [];
   if (input.ageBand === "unspecified") notes.push("The age band is unspecified.");
   if (input.rightsStatus === "unverified") notes.push("Source rights are not cleared.");
-  if (input.reasons.includes("sensitive-domain")) notes.push("A sensitive subject was left for the creator.");
+  if (input.reasons.includes("review-required")) {
+    return "A heading or short excerpt matched a high-risk subject. This is not a safety screening of the whole source. A person must review it before generation can be authorized. Nothing was generated.";
+  }
+  notes.push("Only headings and short excerpts were scanned.");
+  if (input.reasons.includes("sensitive-domain")) notes.push("An independent source clearance is recorded. Generation is still not authorized.");
   const note = notes.length > 0 ? ` ${notes.join(" ")}` : "";
   if (input.status === "recommended" && input.title) {
     return `Start with “${clip(input.title)}”. It has a clear source boundary and enough text for one focused experience. This is not a finished game and has not been checked as educationally effective.${note}`;
@@ -188,6 +217,7 @@ function candidateFrom(input: {
   corrected: boolean;
   excerpts: ReadonlyMap<string, string>;
   sourceOrder: number;
+  cleared: boolean;
 }) {
   const nodes = [input.node, ...input.related];
   const spanIds = [...new Set(nodes.map((node) => node.spanId))];
@@ -202,6 +232,7 @@ function candidateFrom(input: {
     chars,
     extraction: input.extraction,
     flagged: sensitive(input.title, excerptText),
+    cleared: input.cleared,
     unsafe: UNSAFE.test(input.title),
     corrected: input.corrected,
   });
@@ -238,7 +269,10 @@ export function analyzeTopics(input: {
   rightsStatus: "unverified" | "cleared" | "blocked";
   excerpts?: ReadonlyMap<string, string>;
   overrides?: HeadingOverride[];
+  safetyClearance?: IndependentSourceClearance | null;
 }): TopicDecision {
+  const safetyClearance = acceptedClearance(input.safetyClearance) ? "independent-validation" as const : "none" as const;
+  const cleared = safetyClearance === "independent-validation";
   if (!input.audienceLabel.trim()) throw new SourceError("invalid-topic");
   const runReasons: TopicReasonCode[] = [];
   if (input.ageBand === "unspecified") runReasons.push("age-unspecified");
@@ -262,6 +296,9 @@ export function analyzeTopics(input: {
       reasons: runReasons,
       sourceSpanIds: [],
       processedChars: input.canonicalTextLength,
+      sensitivityScreen: "not-run",
+      safetyClearance,
+      generationAuthorized: false,
     };
   }
 
@@ -300,6 +337,7 @@ export function analyzeTopics(input: {
           title: titleOf(section, overrides),
           corrected: overrides.has(section.id),
           excerpts,
+          cleared,
           sourceOrder: section.order,
         }));
       }
@@ -314,6 +352,7 @@ export function analyzeTopics(input: {
           title: titleOf(chapter, overrides),
           corrected: overrides.has(chapter.id),
           excerpts,
+          cleared,
           sourceOrder: chapter.order,
         }));
       }
@@ -327,6 +366,7 @@ export function analyzeTopics(input: {
         title: titleOf(chapter, overrides),
         corrected: overrides.has(chapter.id),
         excerpts,
+        cleared,
         sourceOrder: chapter.order,
       }));
     }
@@ -343,6 +383,7 @@ export function analyzeTopics(input: {
       title: titleOf(section, overrides),
       corrected: overrides.has(section.id),
       excerpts,
+      cleared,
       sourceOrder: section.order,
     }));
   }
@@ -358,6 +399,7 @@ export function analyzeTopics(input: {
       title: "Untitled source",
       corrected: false,
       excerpts,
+      cleared,
       sourceOrder: 0,
     }));
   }
@@ -379,6 +421,13 @@ export function analyzeTopics(input: {
   } else if (ranked.length > 1 || candidates.some((candidate) => candidate.eligibility === "needs-review")) {
     status = "needs-creator-selection";
   }
+  const highRisk = candidates.some((candidate) => candidate.reasons.includes("sensitive-domain"));
+  if (highRisk && !cleared) {
+    status = "needs-creator-selection";
+    winner = null;
+    runReasons.push("review-required");
+  }
+  runReasons.push("partial-sensitivity-screen");
 
   const siblingConcerns = candidates.flatMap((candidate) => candidate.reasons);
   const decisionReasons = [...new Set([
@@ -404,5 +453,21 @@ export function analyzeTopics(input: {
     reasons: decisionReasons,
     sourceSpanIds: winner?.sourceSpanIds ?? [],
     processedChars: input.canonicalTextLength,
+    sensitivityScreen: "title-and-excerpt",
+    safetyClearance,
+    generationAuthorized: false,
   };
+}
+
+function acceptedClearance(value: IndependentSourceClearance | null | undefined) {
+  const reference = value?.reference.trim() ?? "";
+  return Boolean(
+    value
+    && value.scope === "source"
+    && value.method === "independent-validation"
+    && reference.length >= 8
+    && reference.length <= 80
+    && !SENSITIVE.test(reference)
+    && !UNSAFE.test(reference),
+  );
 }

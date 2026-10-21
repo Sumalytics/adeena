@@ -15,6 +15,8 @@ export const TOPIC_REASON_CODES = [
   "ambiguous-structure",
   "missing-context",
   "sensitive-domain",
+  "partial-sensitivity-screen",
+  "review-required",
   "creator-corrected",
   "unsafe-title",
   "age-unspecified",
@@ -95,6 +97,8 @@ export const FirstExperienceRecommendation = z
     generatesExperience: z.literal(false),
     experienceVersionId: z.null(),
     aiGenerationAuthorized: z.literal(false),
+    sensitivityScreen: z.enum(["title-and-excerpt", "not-run"]),
+    safetyClearance: z.enum(["none", "independent-validation"]),
     educationalValidation: z.literal("none"),
   })
   .strict()

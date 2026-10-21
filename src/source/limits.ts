@@ -6,6 +6,7 @@ export const DEFAULT_SOURCE_LIMITS = {
   maxUncompressedBytes: 32 * 1024 * 1024,
   maxCompressionRatio: 100,
   maxTextChars: 5_000_000,
+  maxActiveJobs: 2,
 } as const;
 
 export type SourceLimits = {
@@ -15,6 +16,7 @@ export type SourceLimits = {
   maxUncompressedBytes: number;
   maxCompressionRatio: number;
   maxTextChars: number;
+  maxActiveJobs: number;
 };
 
 export function sourceLimits(overrides?: Partial<SourceLimits>): SourceLimits {

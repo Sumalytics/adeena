@@ -60,8 +60,8 @@ export function createFilesystemObjectStore(root: string): PrivateObjectStore {
     },
     async retire(locator) {
       const parsed = parts(locator);
-      const folder = path.join(files.root, parsed.workspaceId, parsed.contentHash);
-      await rm(path.join(folder, parsed.name), { force: true });
+      const folder = path.join(/*turbopackIgnore: true*/ files.root, parsed.workspaceId, parsed.contentHash);
+      await rm(path.join(/*turbopackIgnore: true*/ folder, parsed.name), { force: true });
     },
     async listLocators(workspaceId) {
       if (!/^[0-9a-f-]{36}$/.test(workspaceId)) throw new SourceError("invalid-path");
@@ -77,10 +77,10 @@ export function createFilesystemObjectStore(root: string): PrivateObjectStore {
       const locators: string[] = [];
       for (const hash of hashes) {
         if (!/^[a-f0-9]{64}$/.test(hash)) continue;
-        const slot = path.join(folder, hash);
+        const slot = path.join(/*turbopackIgnore: true*/ folder, hash);
         for (const name of ["original.bin", "canonical.txt"] as const) {
           try {
-            const info = await stat(path.join(slot, name));
+            const info = await stat(path.join(/*turbopackIgnore: true*/ slot, name));
             if (info.isFile()) locators.push(`private://${workspaceId}/${hash}/${name}`);
           } catch {
             // A missing half of a slot is not a locator.

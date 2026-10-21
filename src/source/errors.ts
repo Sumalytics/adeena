@@ -21,6 +21,21 @@ export const SOURCE_ERROR_CODES = [
   "transient",
   "invalid-knowledge",
   "invalid-topic",
+  "invalid-source",
+  "rights-blocked",
+  "job-limit",
+  "generation-unavailable",
+  "generation-denied",
+  "review-required",
+  "budget-unavailable",
+  "invalid-experience",
+  "insufficient-source",
+  "invalid-generation",
+  "stale-extraction",
+  "invalid-edit",
+  "unsupported-edit",
+  "stale-version",
+  "provider-unavailable",
 ] as const;
 
 export type SourceErrorCode = (typeof SOURCE_ERROR_CODES)[number];
@@ -49,6 +64,21 @@ export const SOURCE_ERROR_TEXT: Record<SourceErrorCode, string> = {
   transient: "Source processing was interrupted and can be retried.",
   "invalid-knowledge": "The extracted structure could not be checked.",
   "invalid-topic": "That topic correction could not be saved.",
+  "invalid-source": "That upload could not be accepted.",
+  "rights-blocked": "Source rights are blocked, so extraction was not queued.",
+  "job-limit": "This workspace already has extraction work in progress.",
+  "generation-unavailable": "AI generation is not configured.",
+  "generation-denied": "This source cannot be used to generate an experience.",
+  "review-required": "This source needs review before an experience can be created.",
+  "budget-unavailable": "Generation spending is not authorized.",
+  "invalid-experience": "The generated experience did not pass validation.",
+  "insufficient-source": "This topic does not have enough source support for a playable experience.",
+  "invalid-generation": "That generation request could not be accepted.",
+  "stale-extraction": "The source extraction changed. Recommend the topic again before creating an experience.",
+  "invalid-edit": "That edit request could not be accepted.",
+  "unsupported-edit": "That change is outside the edits this draft can make.",
+  "stale-version": "A newer revision is already the current draft.",
+  "provider-unavailable": "The model did not answer. The current draft was left unchanged.",
 };
 
 export class SourceError extends Error {

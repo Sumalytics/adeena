@@ -10,6 +10,11 @@ export default defineConfig({
       "packages/experience-schema/**/*.test.ts",
       "packages/player-core/**/*.test.ts",
     ],
+    exclude: [
+      "**/node_modules/**",
+      "**/dist/**",
+      "**/*.integration.test.ts",
+    ],
   },
   resolve: {
     alias: {

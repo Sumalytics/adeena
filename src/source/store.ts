@@ -49,7 +49,7 @@ export function createSourceStore(root: string): SourceStore {
   if (resolvedRoot.split(path.sep).includes("public")) throw new SourceError("invalid-path");
 
   function slot(workspaceId: string, contentHash: string) {
-    return inside(resolvedRoot, path.join(resolvedRoot, checkedId(workspaceId), checkedHash(contentHash)));
+    return inside(resolvedRoot, path.join(/*turbopackIgnore: true*/ resolvedRoot, checkedId(workspaceId), checkedHash(contentHash)));
   }
 
   return {
@@ -57,7 +57,7 @@ export function createSourceStore(root: string): SourceStore {
     async putBytes(workspaceId, contentHash, bytes) {
       const dir = slot(workspaceId, contentHash);
       await mkdir(dir, { recursive: true });
-      const file = inside(dir, path.join(dir, "original.bin"));
+      const file = inside(dir, path.join(/*turbopackIgnore: true*/ dir, "original.bin"));
       try {
         await writeFile(file, bytes, { flag: "wx" });
         return "created";
@@ -70,7 +70,7 @@ export function createSourceStore(root: string): SourceStore {
       }
     },
     async readBytes(workspaceId, contentHash) {
-      const file = inside(slot(workspaceId, contentHash), path.join(slot(workspaceId, contentHash), "original.bin"));
+      const file = inside(slot(workspaceId, contentHash), path.join(/*turbopackIgnore: true*/ slot(workspaceId, contentHash), "original.bin"));
       try {
         const stored = await readFile(file);
         const actual = createHash("sha256").update(stored).digest("hex");
@@ -85,13 +85,13 @@ export function createSourceStore(root: string): SourceStore {
       if (!/^[a-z0-9-]+\.json$/.test(name)) throw new SourceError("invalid-path");
       const dir = slot(workspaceId, contentHash);
       await mkdir(dir, { recursive: true });
-      await writeAtomic(inside(dir, path.join(dir, name)), Buffer.from(JSON.stringify(value)));
+      await writeAtomic(inside(dir, path.join(/*turbopackIgnore: true*/ dir, name)), Buffer.from(JSON.stringify(value)));
     },
     async readJson(workspaceId, contentHash, name) {
       if (!/^[a-z0-9-]+\.json$/.test(name)) throw new SourceError("invalid-path");
       const dir = slot(workspaceId, contentHash);
       try {
-        return JSON.parse(await readFile(inside(dir, path.join(dir, name)), "utf8")) as unknown;
+        return JSON.parse(await readFile(inside(dir, path.join(/*turbopackIgnore: true*/ dir, name)), "utf8")) as unknown;
       } catch {
         return null;
       }
@@ -100,26 +100,26 @@ export function createSourceStore(root: string): SourceStore {
       if (!/^[a-z0-9-]+\.txt$/.test(name)) throw new SourceError("invalid-path");
       const dir = slot(workspaceId, contentHash);
       await mkdir(dir, { recursive: true });
-      await writeAtomic(inside(dir, path.join(dir, name)), Buffer.from(value, "utf8"));
+      await writeAtomic(inside(dir, path.join(/*turbopackIgnore: true*/ dir, name)), Buffer.from(value, "utf8"));
     },
     async readText(workspaceId, contentHash, name) {
       if (!/^[a-z0-9-]+\.txt$/.test(name)) throw new SourceError("invalid-path");
       const dir = slot(workspaceId, contentHash);
       try {
-        return await readFile(inside(dir, path.join(dir, name)), "utf8");
+        return await readFile(inside(dir, path.join(/*turbopackIgnore: true*/ dir, name)), "utf8");
       } catch {
         return null;
       }
     },
     async writeJob(workspaceId, jobId, value) {
-      const dir = inside(resolvedRoot, path.join(resolvedRoot, checkedId(workspaceId), "jobs"));
+      const dir = inside(resolvedRoot, path.join(/*turbopackIgnore: true*/ resolvedRoot, checkedId(workspaceId), "jobs"));
       await mkdir(dir, { recursive: true });
-      await writeAtomic(inside(dir, path.join(dir, `${checkedId(jobId)}.json`)), Buffer.from(JSON.stringify(value)));
+      await writeAtomic(inside(dir, path.join(/*turbopackIgnore: true*/ dir, `${checkedId(jobId)}.json`)), Buffer.from(JSON.stringify(value)));
     },
     async readJob(workspaceId, jobId) {
       const file = inside(
         resolvedRoot,
-        path.join(resolvedRoot, checkedId(workspaceId), "jobs", `${checkedId(jobId)}.json`),
+        path.join(/*turbopackIgnore: true*/ resolvedRoot, checkedId(workspaceId), "jobs", `${checkedId(jobId)}.json`),
       );
       try {
         return JSON.parse(await readFile(file, "utf8")) as unknown;
@@ -128,7 +128,7 @@ export function createSourceStore(root: string): SourceStore {
       }
     },
     async listJobs(workspaceId) {
-      const dir = inside(resolvedRoot, path.join(resolvedRoot, checkedId(workspaceId), "jobs"));
+      const dir = inside(resolvedRoot, path.join(/*turbopackIgnore: true*/ resolvedRoot, checkedId(workspaceId), "jobs"));
       let names: string[] = [];
       try {
         names = await readdir(dir);
@@ -138,7 +138,7 @@ export function createSourceStore(root: string): SourceStore {
       const jobs: unknown[] = [];
       for (const name of names) {
         if (!name.endsWith(".json")) continue;
-        const parsed = JSON.parse(await readFile(inside(dir, path.join(dir, name)), "utf8")) as unknown;
+        const parsed = JSON.parse(await readFile(inside(dir, path.join(/*turbopackIgnore: true*/ dir, name)), "utf8")) as unknown;
         jobs.push(parsed);
       }
       return jobs;

@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { and, eq } from "drizzle-orm";
+import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import type { Sql } from "postgres";
 import { classifyDocument, displayFilename } from "@/source/extract";
 import { SourceError, sourceError } from "@/source/errors";
@@ -109,6 +109,22 @@ export async function enqueueDurableSource(input: {
         version = inserted[0];
       }
       if (!version) throw new SourceError("integrity-mismatch");
+      if (version.rightsStatus === "blocked") throw new SourceError("rights-blocked");
+      const existingForVersion = await db
+        .select()
+        .from(extractionJobs)
+        .where(and(eq(extractionJobs.workspaceId, input.workspaceId), eq(extractionJobs.documentVersionId, version.id)))
+        .limit(1);
+      if (existingForVersion[0]) return { job: existingForVersion[0], version, replayed: true as const };
+      const active = await db
+        .select({ total: sql<number>`count(*)::int` })
+        .from(extractionJobs)
+        .where(and(
+          eq(extractionJobs.workspaceId, input.workspaceId),
+          eq(extractionJobs.permanent, false),
+          inArray(extractionJobs.status, ["queued", "processing"]),
+        ));
+      if (Number(active[0]?.total ?? 0) >= limits.maxActiveJobs) throw new SourceError("job-limit");
       const insertedJob = await db
         .insert(extractionJobs)
         .values({
@@ -186,6 +202,91 @@ export async function readExtractionRecord(sql: Sql, identity: VerifiedIdentity,
       .where(eq(knowledgeCollections.documentVersionId, versionId));
     const costs = await db.select().from(sourceProcessingCosts).where(eq(sourceProcessingCosts.workspaceId, workspaceId));
     return { result: result[0] ?? null, nodes, spans, collection: collections[0] ?? null, costs };
+  });
+}
+
+export async function storeBlockedDocument(input: {
+  sql: Sql;
+  identity: VerifiedIdentity;
+  workspaceId: string;
+  filename: string;
+  bytes: Uint8Array;
+  store: PrivateObjectStore;
+  limits?: Partial<SourceLimits>;
+}) {
+  const limits = sourceLimits(input.limits);
+  if (input.bytes.byteLength === 0) throw new SourceError("empty-file");
+  if (input.bytes.byteLength > limits.maxBytes) throw new SourceError("oversized");
+  const mediaType = classifyDocument(input.filename, input.bytes);
+  const contentHash = createHash("sha256").update(input.bytes).digest("hex");
+  const filename = displayFilename(input.filename);
+  try {
+    return await withWorkspace(input.sql, input.identity, input.workspaceId, async ({ db, userId }) => {
+      const existingVersion = await db
+        .select()
+        .from(sourceDocumentVersions)
+        .where(and(eq(sourceDocumentVersions.workspaceId, input.workspaceId), eq(sourceDocumentVersions.contentHash, contentHash)));
+      if (existingVersion[0]) return { version: existingVersion[0], replayed: true as const };
+      const stored = await input.store.putOriginal(input.workspaceId, contentHash, input.bytes);
+      if (!(await input.store.verifyOriginal(input.workspaceId, contentHash))) throw new SourceError("integrity-mismatch");
+      const documentId = randomUUID();
+      await db.insert(sourceDocuments).values({ id: documentId, workspaceId: input.workspaceId });
+      const inserted = await db
+        .insert(sourceDocumentVersions)
+        .values({
+          id: randomUUID(),
+          documentId,
+          workspaceId: input.workspaceId,
+          version: 1,
+          parentVersionId: null,
+          originalFilename: filename,
+          contentHash,
+          mediaType,
+          sizeBytes: input.bytes.byteLength,
+          storageLocator: stored.locator,
+          rightsStatus: "blocked",
+          uploadedBy: userId,
+        })
+        .returning();
+      const version = inserted[0];
+      if (!version) throw new SourceError("integrity-mismatch");
+      return { version, replayed: false as const };
+    });
+  } catch (error) {
+    if (error instanceof SourceError) throw error;
+    const failure = databaseFailure(error);
+    if (/row-level security|workspace owner/i.test(failure.message)) throw new SourceError("cross-workspace");
+    throw failure;
+  }
+}
+
+export async function readVersionProcessing(sql: Sql, identity: VerifiedIdentity, workspaceId: string, versionId: string) {
+  return withWorkspace(sql, identity, workspaceId, async ({ db }) => {
+    const versions = await db
+      .select()
+      .from(sourceDocumentVersions)
+      .where(and(eq(sourceDocumentVersions.workspaceId, workspaceId), eq(sourceDocumentVersions.id, versionId)));
+    const version = versions[0];
+    if (!version) throw new SourceError("cross-workspace");
+    const jobs = await db
+      .select()
+      .from(extractionJobs)
+      .where(and(eq(extractionJobs.workspaceId, workspaceId), eq(extractionJobs.documentVersionId, versionId)))
+      .orderBy(desc(extractionJobs.createdAt))
+      .limit(1);
+    const results = await db
+      .select()
+      .from(extractionResults)
+      .where(and(eq(extractionResults.workspaceId, workspaceId), eq(extractionResults.documentVersionId, versionId)));
+    const spans = await db
+      .select({ id: sourceSpans.id })
+      .from(sourceSpans)
+      .where(and(eq(sourceSpans.workspaceId, workspaceId), eq(sourceSpans.documentVersionId, versionId)));
+    const job = jobs[0] ?? null;
+    const costs = job
+      ? await db.select().from(sourceProcessingCosts).where(and(eq(sourceProcessingCosts.workspaceId, workspaceId), eq(sourceProcessingCosts.jobId, job.id)))
+      : [];
+    return { version, job, result: results[0] ?? null, spanCount: spans.length, cost: costs[0] ?? null };
   });
 }
 

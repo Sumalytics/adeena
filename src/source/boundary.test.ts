@@ -51,10 +51,24 @@ describe("source ingestion stays off the client and Studio routes", () => {
     expect(offenders).toEqual([]);
   });
 
-  it("does not expose a private upload route", () => {
+  it("keeps private source upload on the creator API", () => {
     const api = path.join(process.cwd(), "src/app/api");
     const routes = sourceFiles(api).map((file) => file.replaceAll("\\", "/"));
-    expect(routes.some((file) => file.includes("/upload"))).toBe(false);
+    const sourceRoutes = routes.filter((file) => file.includes("/api/creator/sources"));
+    expect(sourceRoutes.length).toBeGreaterThan(0);
+    for (const file of sourceRoutes) {
+      const source = readFileSync(file, "utf8");
+      expect(source).not.toMatch(/@\/source|@\/db|@\/storage|private:\/\/|https?:\/\//);
+      expect(source).not.toMatch(/adeena\.user_id|x-user-id|x-workspace-id/);
+    }
+    expect(routes.some((file) => file.includes("/api/studio") && file.includes("upload"))).toBe(false);
+    const experienceRoutes = routes.filter((file) => file.includes("/api/creator/experiences"));
+    expect(experienceRoutes.length).toBeGreaterThan(0);
+    for (const file of experienceRoutes) {
+      const source = readFileSync(file, "utf8");
+      expect(source).not.toMatch(/@\/source|@\/db|@\/storage|private:\/\/|https?:\/\//);
+      expect(source).not.toMatch(/adeena\.user_id|x-user-id|x-workspace-id/);
+    }
   });
 
   it("keeps the Studio file control on the device", () => {

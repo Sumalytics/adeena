@@ -4,7 +4,7 @@ import { FirstExperienceRecommendation } from "@/contracts/topic";
 import { buildKnowledge } from "@/source/knowledge";
 import type { ExtractedBlock } from "@/source/extract-text";
 import { SourceError } from "@/source/errors";
-import { analyzeTopics, TOPIC_RANKING } from "./analyze";
+import { analyzeTopics, SENSITIVITY_SCREEN, TOPIC_RANKING } from "./analyze";
 
 const workspaceId = "11111111-1111-4111-8111-111111111111";
 const documentVersionId = "22222222-2222-4222-8222-222222222222";
@@ -30,6 +30,7 @@ function decide(
     issues?: { code: string }[];
     ageBand?: "8-10" | "unspecified";
     rightsStatus?: "unverified" | "cleared" | "blocked";
+    safetyClearance?: { scope: "source"; method: "independent-validation"; reference: string } | null;
     excerpts?: Map<string, string>;
     overrides?: { nodeId: string; title: string }[];
     nodes?: ReturnType<typeof buildKnowledge>["nodes"];
@@ -47,6 +48,7 @@ function decide(
       audienceLabel: "Primary learners",
       ageBand: extra.ageBand ?? "8-10",
       rightsStatus: extra.rightsStatus ?? "unverified",
+      safetyClearance: extra.safetyClearance,
       excerpts: extra.excerpts,
       overrides: extra.overrides,
     }),
@@ -65,6 +67,9 @@ describe("topic detection and first recommendation", () => {
     expect(decision.sourceSpanIds.length).toBeGreaterThan(0);
     expect(decision.reason).toContain("Start with");
     expect(decision.reason).toContain("not a finished game");
+    expect(decision.reason).toContain("short excerpts");
+    expect(decision.sensitivityScreen).toBe("title-and-excerpt");
+    expect(decision.generationAuthorized).toBe(false);
     expect(decision.reason).not.toMatch(/\d+%/);
   });
 
@@ -152,12 +157,76 @@ describe("topic detection and first recommendation", () => {
     expect(blocked.decision.candidates).toHaveLength(0);
   });
 
-  it("does not automatically recommend a sensitive heading", () => {
-    const { decision } = decide([section("Dosage safety"), paragraph(lesson)]);
-    expect(decision.status).toBe("needs-creator-selection");
-    expect(decision.topicCandidateId).toBeNull();
-    expect(decision.candidates[0]?.reasons).toContain("sensitive-domain");
-    expect(decision.candidates[0]?.educationalValidation).toBe("none");
+  it("requires review for high-risk signals and does not treat the scan as complete", () => {
+    const medical = decide([section("Dosage safety"), paragraph(lesson)]);
+    const safeguarding = decide([section("Child protection duties"), paragraph(lesson)]);
+    const regulated = decide([section("Regulated conduct"), paragraph(lesson)]);
+    for (const result of [medical, safeguarding, regulated]) {
+      expect(result.decision.status).toBe("needs-creator-selection");
+      expect(result.decision.topicCandidateId).toBeNull();
+      expect(result.decision.reasons).toContain("review-required");
+      expect(result.decision.reasons).toContain("partial-sensitivity-screen");
+      expect(result.decision.generationAuthorized).toBe(false);
+      expect(result.decision.reason).toContain("not a safety screening");
+    }
+    const hidden = decide([section("Rivers"), paragraph(lesson)]);
+    const excerptOnly = analyzeTopics({
+      nodes: hidden.knowledge.nodes,
+      spans: hidden.knowledge.spans,
+      extraction: { id: extractionId, status: "complete", issues: [] },
+      canonicalTextLength: hidden.knowledge.canonical.text.length,
+      audienceLabel: "Primary learners",
+      ageBand: "8-10",
+      rightsStatus: "unverified",
+      excerpts: new Map(hidden.knowledge.spans.map((span) => [span.id, "Learners compare a dosage record with the source note."])),
+    });
+    expect(excerptOnly.reasons).toContain("review-required");
+    const clearedRights = decide([section("Clinical handover"), paragraph(lesson)], { rightsStatus: "cleared" });
+    expect(clearedRights.decision.safetyClearance).toBe("none");
+    expect(clearedRights.decision.topicCandidateId).toBeNull();
+    const mixed = decide([
+      section("Rivers"),
+      paragraph(lesson),
+      section("Safeguarding note"),
+      paragraph(lesson),
+    ]);
+    expect(mixed.decision.topicCandidateId).toBeNull();
+    expect(mixed.decision.status).toBe("needs-creator-selection");
+  });
+
+  it("keeps generation unauthorized when an independent source clearance exists", () => {
+    const { decision } = decide([section("Medication review"), paragraph(lesson)], {
+      safetyClearance: {
+        scope: "source",
+        method: "independent-validation",
+        reference: "review-board-2026-014",
+      },
+    });
+    expect(decision.safetyClearance).toBe("independent-validation");
+    expect(decision.status).toBe("recommended");
+    expect(decision.generationAuthorized).toBe(false);
+    expect(decision.reason).toContain("not authorized");
+  });
+
+  it("does not see a high-risk phrase that sits past the excerpt window", () => {
+    const built = decide([section("Rivers"), paragraph(`${"Learners compare two careful choices. ".repeat(20)}dosage record`)]);
+    const spanId = built.decision.candidates[0]?.sourceSpanIds.at(-1) ?? "";
+    const full = built.knowledge.canonical.text;
+    const excerpt = full.slice(0, SENSITIVITY_SCREEN.excerptChars);
+    expect(excerpt.toLowerCase()).not.toContain("dosage");
+    const screened = analyzeTopics({
+      nodes: built.knowledge.nodes,
+      spans: built.knowledge.spans,
+      extraction: { id: extractionId, status: "complete", issues: [] },
+      canonicalTextLength: full.length,
+      audienceLabel: "Primary learners",
+      ageBand: "8-10",
+      rightsStatus: "unverified",
+      excerpts: new Map([[spanId, excerpt]]),
+    });
+    expect(screened.reasons).not.toContain("review-required");
+    expect(screened.sensitivityScreen).toBe("title-and-excerpt");
+    expect(SENSITIVITY_SCREEN.comprehensive).toBe(false);
   });
 
   it("repeats the same ranking and keeps tie order stable", () => {
@@ -241,6 +310,8 @@ describe("topic detection and first recommendation", () => {
       generatesExperience: false,
       experienceVersionId: null,
       aiGenerationAuthorized: false,
+      sensitivityScreen: decision.sensitivityScreen,
+      safetyClearance: decision.safetyClearance,
       educationalValidation: "none",
     });
     expect(recommendation.generatesExperience).toBe(false);
