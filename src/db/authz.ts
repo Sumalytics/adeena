@@ -6,6 +6,12 @@ import { assertVerifiedIdentity, type VerifiedIdentity } from "./identity";
 
 const authorizationBrand = Symbol("adeena.authorized-workspace");
 
+/** Binds the verified user for this transaction and clears any session-scoped value. */
+export async function bindVerifiedActor(tx: Sql, userId: string) {
+  await tx`select set_config('adeena.user_id', '', false)`;
+  await tx`select set_config('adeena.user_id', ${userId}, true)`;
+}
+
 export type AuthorizedWorkspace = {
   readonly [authorizationBrand]: true;
   readonly userId: string;
@@ -23,7 +29,7 @@ export async function withWorkspace<T>(
   const actor = assertVerifiedIdentity(identity);
   if (workspaceId === SYNTHETIC_WORKSPACE_ID) throw new SourceError("unauthenticated");
   return sql.begin(async (tx) => {
-    await tx`select set_config('adeena.user_id', ${actor.userId}, true)`;
+    await bindVerifiedActor(tx as unknown as Sql, actor.userId);
     const allowed = await tx`select adeena.is_active_member(${workspaceId}::uuid) as ok`;
     if (allowed[0]?.ok !== true) throw new SourceError("unauthenticated");
     return run({
@@ -44,7 +50,7 @@ export async function createWorkspace(
   const actor = assertVerifiedIdentity(identity);
   if (input.id === SYNTHETIC_WORKSPACE_ID) throw new SourceError("unauthenticated");
   await sql.begin(async (tx) => {
-    await tx`select set_config('adeena.user_id', ${actor.userId}, true)`;
+    await bindVerifiedActor(tx as unknown as Sql, actor.userId);
     await tx`select adeena.create_workspace(${input.id}::uuid, ${input.name}, ${input.workspaceType}, ${actor.userId}::uuid)`;
   });
 }

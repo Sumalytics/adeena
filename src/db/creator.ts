@@ -2,13 +2,13 @@ import { randomUUID } from "node:crypto";
 import type { Sql } from "postgres";
 import { SYNTHETIC_WORKSPACE_ID } from "@/contracts/common";
 import { SourceError } from "@/source/errors";
-import { withWorkspace } from "./authz";
+import { bindVerifiedActor, withWorkspace } from "./authz";
 import { assertVerifiedIdentity, type VerifiedIdentity } from "./identity";
 
 export async function ensureIndividualWorkspace(sql: Sql, identity: VerifiedIdentity) {
   const actor = assertVerifiedIdentity(identity);
   return sql.begin(async (tx) => {
-    await tx`select set_config('adeena.user_id', ${actor.userId}, true)`;
+    await bindVerifiedActor(tx as unknown as Sql, actor.userId);
     await tx`select pg_advisory_xact_lock(hashtextextended(${actor.userId}, 0))`;
     const existing = await tx<{ workspace_id: string; status: string }[]>`
       select workspace_id, status from adeena.personal_workspace_for_session()

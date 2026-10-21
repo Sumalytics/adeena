@@ -13,6 +13,8 @@ export const AgeBand = z.enum([
   "unspecified",
 ]);
 
+export type AgeBand = z.infer<typeof AgeBand>;
+
 export const RightsStatus = z.enum(["unverified", "cleared", "blocked"]);
 
 /** Fixed workspace for synthetic studio sessions. Not a customer tenant. */

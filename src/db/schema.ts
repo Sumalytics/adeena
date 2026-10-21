@@ -108,6 +108,67 @@ export const knowledgeNodes = pgTable("knowledge_nodes", {
   createdAt: timestamps.createdAt,
 });
 
+export const topicOverrides = pgTable("topic_overrides", {
+  id: uuid("id").primaryKey(),
+  workspaceId: uuid("workspace_id").notNull(),
+  documentVersionId: uuid("document_version_id").notNull(),
+  collectionId: uuid("collection_id").notNull(),
+  nodeId: uuid("node_id").notNull(),
+  version: integer("version").notNull(),
+  correctedTitle: text("corrected_title").notNull(),
+  createdBy: uuid("created_by").notNull(),
+  createdAt: timestamps.createdAt,
+});
+
+export const topicCandidates = pgTable("topic_candidates", {
+  id: uuid("id").primaryKey(),
+  workspaceId: uuid("workspace_id").notNull(),
+  collectionId: uuid("collection_id").notNull(),
+  documentVersionId: uuid("document_version_id").notNull(),
+  extractionId: uuid("extraction_id").notNull(),
+  detectionVersion: text("detection_version").notNull(),
+  overrideVersion: integer("override_version").notNull(),
+  title: text("title").notNull(),
+  sourceOrder: integer("source_order").notNull(),
+  detectionMethod: text("detection_method").notNull(),
+  uncertainty: text("uncertainty").notNull(),
+  eligibility: text("eligibility").notNull(),
+  reasons: jsonb("reasons").notNull(),
+  supportChars: integer("support_chars").notNull(),
+  primaryNodeId: uuid("primary_node_id").notNull(),
+  nodeIds: jsonb("node_ids").notNull(),
+  sourceSpanIds: jsonb("source_span_ids").notNull(),
+  createdAt: timestamps.createdAt,
+});
+
+export const recommendationRuns = pgTable("recommendation_runs", {
+  id: uuid("id").primaryKey(),
+  workspaceId: uuid("workspace_id").notNull(),
+  collectionId: uuid("collection_id"),
+  documentVersionId: uuid("document_version_id").notNull(),
+  extractionId: uuid("extraction_id").notNull(),
+  detectionVersion: text("detection_version").notNull(),
+  overrideVersion: integer("override_version").notNull(),
+  audienceLabel: text("audience_label").notNull(),
+  ageBand: text("age_band").notNull(),
+  status: text("status").notNull(),
+  topicCandidateId: uuid("topic_candidate_id"),
+  reason: text("reason").notNull(),
+  reasons: jsonb("reasons").notNull(),
+  sourceSpanIds: jsonb("source_span_ids").notNull(),
+  understood: text("understood").notNull(),
+  candidateCount: integer("candidate_count").notNull(),
+  processedChars: integer("processed_chars").notNull(),
+  durationMs: integer("duration_ms").notNull(),
+  failureCount: integer("failure_count").notNull(),
+  generatesExperience: boolean("generates_experience").notNull(),
+  experienceVersionId: uuid("experience_version_id"),
+  aiGenerationAuthorized: boolean("ai_generation_authorized").notNull(),
+  active: boolean("active").notNull(),
+  idempotencyKey: uuid("idempotency_key").notNull(),
+  createdAt: timestamps.createdAt,
+});
+
 export const sourceProcessingCosts = pgTable("source_processing_costs", {
   id: uuid("id").primaryKey(),
   workspaceId: uuid("workspace_id").notNull(),

@@ -15,3 +15,9 @@ export {
   SourceDocumentVersion,
   SourceSpan,
 } from "./source";
+export {
+  FirstExperienceRecommendation,
+  TopicCandidate,
+  TopicDetectionResult,
+  TopicOverride,
+} from "./topic";

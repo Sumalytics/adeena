@@ -7,7 +7,7 @@ import { SYNTHETIC_WORKSPACE_ID } from "@/contracts/common";
 import { createFilesystemObjectStore } from "@/storage/filesystem";
 import { reconcileOrphans } from "@/storage/reconcile";
 import { SourceError } from "@/source/errors";
-import { withWorkspace, createWorkspace } from "./authz";
+import { withWorkspace, createWorkspace, bindVerifiedActor } from "./authz";
 import { databaseFailure, openDatabase, type DatabaseClient } from "./client";
 import { applicationDatabaseUrl, databaseUrl, redactDatabaseMessage } from "./env";
 import { issueIdentityForIsolatedTests, type VerifiedIdentity } from "./identity";
@@ -25,6 +25,7 @@ import { claimExtractionJob, runExtractionOnce } from "./worker";
 import { ensureIndividualWorkspace, openCreatorWorkspace } from "./creator";
 import { creatorWorkspaceResponse } from "@/auth/creator";
 import { sessionFromAuthUser } from "@/auth/subject";
+import { correctTopicHeading, listExtractedSources, recommendFirstTopic } from "./topic-repository";
 
 describe("database configuration", () => {
   it("redacts connection strings from database errors", () => {
@@ -73,7 +74,7 @@ describe("postgresql source persistence", () => {
   afterAll(async () => {
     try {
       if (ready && admin) {
-        await admin`TRUNCATE source_processing_costs, knowledge_nodes, source_spans, knowledge_collections, extraction_results, extraction_jobs, source_document_versions, source_documents, workspace_memberships, workspaces`;
+        await admin`TRUNCATE recommendation_runs, topic_candidates, topic_overrides, source_processing_costs, knowledge_nodes, source_spans, knowledge_collections, extraction_results, extraction_jobs, source_document_versions, source_documents, workspace_memberships, workspaces`;
       }
     } finally {
       if (admin) await admin.end({ timeout: 1 });
@@ -95,6 +96,13 @@ describe("postgresql source persistence", () => {
     expect(await migrateUp(admin)).toMatchObject({ applied: false });
     const tables = await sql`select to_regclass('public.source_document_versions') as versions`;
     expect(tables[0]?.versions).toBe("source_document_versions");
+    const membership = await admin`
+      select c.relforcerowsecurity as forced
+      from pg_class c
+      join pg_namespace n on n.oid = c.relnamespace
+      where n.nspname = 'public' and c.relname = 'workspace_memberships'
+    `;
+    expect(membership[0]?.forced).toBe(true);
     await expect(sql`select id from adeena_schema_migrations`).rejects.toThrow();
   });
 
@@ -339,6 +347,23 @@ describe("postgresql source persistence", () => {
     expect(second.body.created).toBe(false);
     expect(sessionFromAuthUser({ id: SYNTHETIC_WORKSPACE_ID })).toBeNull();
     expect(sessionFromAuthUser(null)).toBeNull();
+    const reserved = await sql.reserve();
+    try {
+      const planted = randomUUID();
+      await reserved`select set_config('adeena.user_id', ${planted}, false)`;
+      await reserved`begin`;
+      await bindVerifiedActor(reserved, userId);
+      const during = await reserved`select current_setting('adeena.user_id', true) as user_id`;
+      expect(during[0]?.user_id).toBe(userId);
+      await reserved`commit`;
+      const setting = await reserved`select current_setting('adeena.user_id', true) as user_id`;
+      expect(setting[0]?.user_id ?? "").toBe("");
+      const visible = await reserved`select id from workspaces where id = ${first.body.workspaceId}::uuid`;
+      expect(visible).toHaveLength(0);
+    } finally {
+      await reserved`rollback`.catch(() => undefined);
+      reserved.release();
+    }
     const forged = await creatorWorkspaceResponse({
       session: { userId, identity: {} as VerifiedIdentity },
       sql,
@@ -377,5 +402,109 @@ describe("postgresql source persistence", () => {
       suppliedUserId: null,
     });
     expect(blocked).toMatchObject({ status: 401, body: { error: "unauthenticated" } });
+  });
+
+  it("recommends one extracted topic and keeps the correction out of the source", async () => {
+    const room = await tenant("Topic room");
+    const other = await tenant("Other topic room");
+    const lesson = "Learners compare two careful choices and explain the result using only this passage. ".repeat(6);
+    const enqueued = await enqueueDurableSource({
+      sql,
+      identity: room.identity,
+      workspaceId: room.workspaceId,
+      filename: "workshop.md",
+      bytes: Buffer.from(`# Workshop\n\n## Label\n\nToo small.\n\n## Clouds\n\n${lesson}`),
+      idempotencyKey: randomUUID(),
+      store: room.store,
+    });
+    const versionId = enqueued.version?.id ?? enqueued.job.documentVersionId;
+    const extracted = await runExtractionOnce({
+      sql,
+      identity: room.identity,
+      workspaceId: room.workspaceId,
+      store: room.store,
+      leaseOwner: "topic-test",
+    });
+    expect(extracted?.documentVersionId).toBe(versionId);
+    const request = {
+      sql,
+      identity: room.identity,
+      workspaceId: room.workspaceId,
+      documentVersionId: versionId,
+      audienceLabel: "Primary learners" as const,
+      ageBand: "8-10" as const,
+    };
+    const key = randomUUID();
+    const first = await recommendFirstTopic({ ...request, idempotencyKey: key });
+    expect(first.recommendation).toMatchObject({
+      status: "recommended",
+      topicTitle: "Clouds",
+      generatesExperience: false,
+      experienceVersionId: null,
+      aiGenerationAuthorized: false,
+      failureCount: 0,
+      replayed: false,
+    });
+    expect(first.recommendation?.durationMs).toBeGreaterThanOrEqual(0);
+    expect(first.recommendation?.processedChars).toBeGreaterThan(lesson.length);
+    const replay = await recommendFirstTopic({ ...request, idempotencyKey: key });
+    expect(replay.recommendation?.id).toBe(first.recommendation?.id);
+    expect(replay.recommendation?.replayed).toBe(true);
+    const repeated = await recommendFirstTopic({ ...request, idempotencyKey: randomUUID() });
+    expect(repeated.recommendation?.id).toBe(first.recommendation?.id);
+    const stored = await admin<{ total: number }[]>`
+      select count(*)::int as total from topic_candidates where document_version_id = ${versionId}::uuid
+    `;
+    expect(stored[0]?.total).toBe(first.page.total);
+    await expect(recommendFirstTopic({
+      ...request,
+      identity: other.identity,
+      workspaceId: other.workspaceId,
+      idempotencyKey: randomUUID(),
+    })).rejects.toThrow(SourceError);
+    const clouds = first.candidates.find((candidate) => candidate.title === "Clouds");
+    expect(clouds?.primaryNodeId).toBeTruthy();
+    const corrected = await correctTopicHeading({
+      sql,
+      identity: room.identity,
+      workspaceId: room.workspaceId,
+      documentVersionId: versionId,
+      nodeId: clouds?.primaryNodeId ?? randomUUID(),
+      correctedTitle: "Rain clouds",
+    });
+    expect(corrected.invalidated).toBe(1);
+    expect(corrected.generatesExperience).toBe(false);
+    const original = await withWorkspace(sql, room.identity, room.workspaceId, async ({ tx }) => {
+      return tx<{ title: string | null }[]>`
+        select title from knowledge_nodes where id = ${clouds?.primaryNodeId ?? randomUUID()}::uuid
+      `;
+    });
+    expect(original[0]?.title).toBe("Clouds");
+    const next = await recommendFirstTopic({ ...request, idempotencyKey: randomUUID() });
+    expect(next.recommendation?.topicTitle).toBe("Rain clouds");
+    expect(next.recommendation?.id).not.toBe(first.recommendation?.id);
+    expect(next.recommendation?.generatesExperience).toBe(false);
+    const inactive = await admin<{ total: number }[]>`
+      select count(*)::int as total from recommendation_runs
+      where document_version_id = ${versionId}::uuid and active = false
+    `;
+    expect(inactive[0]?.total).toBe(1);
+    await expect(withWorkspace(sql, other.identity, other.workspaceId, async ({ tx }) => {
+      await tx`
+        insert into topic_candidates (
+          id, workspace_id, collection_id, document_version_id, extraction_id, detection_version,
+          override_version, title, source_order, detection_method, uncertainty, eligibility, reasons,
+          support_chars, primary_node_id, node_ids, source_span_ids
+        ) values (
+          ${randomUUID()}::uuid, ${room.workspaceId}::uuid, ${randomUUID()}::uuid, ${versionId}::uuid,
+          ${randomUUID()}::uuid, '1', 0, 'Hidden', 90, 'explicit-heading', 'stated', 'eligible', '[]'::jsonb,
+          20, ${randomUUID()}::uuid, '[]'::jsonb, '[]'::jsonb
+        )
+      `;
+    })).rejects.toThrow();
+    const listed = await listExtractedSources(sql, room.identity, room.workspaceId);
+    expect(listed).toContainEqual(expect.objectContaining({ documentVersionId: versionId, filename: "workshop.md", extractionStatus: "complete" }));
+    const hidden = await listExtractedSources(sql, other.identity, other.workspaceId);
+    expect(hidden.some((source) => source.documentVersionId === versionId)).toBe(false);
   });
 });

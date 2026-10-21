@@ -20,6 +20,7 @@ export const SOURCE_ERROR_CODES = [
   "invalid-path",
   "transient",
   "invalid-knowledge",
+  "invalid-topic",
 ] as const;
 
 export type SourceErrorCode = (typeof SOURCE_ERROR_CODES)[number];
@@ -47,6 +48,7 @@ export const SOURCE_ERROR_TEXT: Record<SourceErrorCode, string> = {
   "invalid-path": "The storage path was rejected.",
   transient: "Source processing was interrupted and can be retried.",
   "invalid-knowledge": "The extracted structure could not be checked.",
+  "invalid-topic": "That topic correction could not be saved.",
 };
 
 export class SourceError extends Error {

@@ -1,0 +1,1 @@
+ALTER TABLE workspace_memberships FORCE ROW LEVEL SECURITY;
