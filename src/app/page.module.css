@@ -28,17 +28,33 @@
 }
 
 .enter {
-  display: inline-block;
+  display: inline-flex;
+  align-items: center;
   background: var(--forest-deep);
   color: var(--cream);
   text-decoration: none;
   padding: 0.75rem 1rem;
-  min-height: 2.75rem;
+  min-height: 3rem;
 }
 
 .enter:hover {
   background: var(--forest);
   color: var(--cream);
+}
+
+.enter:focus-visible {
+  outline: 3px solid var(--orange);
+  outline-offset: 2px;
+}
+
+.signIn {
+  display: inline-flex;
+  align-items: center;
+  min-height: 3rem;
+  padding: 0.75rem 0.25rem;
+  color: var(--forest-deep);
+  font-weight: 700;
+  text-decoration: none;
 }
 
 .links {

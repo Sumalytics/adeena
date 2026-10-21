@@ -17,7 +17,7 @@
   background: var(--surface);
   border: 1px solid var(--line);
   padding: 0.65rem 0.75rem;
-  min-height: 2.75rem;
+  min-height: 3rem;
 }
 
 .form button,
@@ -26,9 +26,15 @@
   background: var(--forest-deep);
   color: var(--cream);
   border: 0;
-  min-height: 2.75rem;
+  min-height: 3rem;
   padding: 0.75rem 1rem;
   cursor: pointer;
+}
+
+.form button:focus-visible,
+.secondary:focus-visible {
+  outline: 3px solid var(--orange);
+  outline-offset: 2px;
 }
 
 .form button:hover,
@@ -42,12 +48,25 @@
 }
 
 .alert,
-.note {
+.note,
+.pending {
   margin: 1rem 0 0;
   max-width: 36rem;
   padding: 0.75rem 1rem;
   background: var(--surface);
   border: 1px solid var(--line);
+}
+
+.pending {
+  border-left: 4px solid var(--forest);
+}
+
+.textLink {
+  display: inline-flex;
+  align-items: center;
+  min-height: 3rem;
+  color: var(--forest-deep);
+  font-weight: 700;
 }
 
 .steps {

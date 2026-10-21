@@ -59,6 +59,11 @@ describe("universal player session", () => {
     if (cover.kind !== "cover") return;
     expect(cover.title).toBe("Shared shelf");
     expect(cover.locale).toBe("en");
+    expect(cover.meters.map((meter) => [meter.label, meter.value])).toEqual([
+      ["Tools on the shelf", 3],
+      ["Repairs recorded", 0],
+      ["Keeper notes", 0],
+    ]);
 
     const scene = presentPlayer(started().snapshot(), sharedShelfPresentation);
     expect(scene.kind).toBe("scene");

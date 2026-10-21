@@ -37,7 +37,7 @@ export function LoginForm({ nextPath, confirmError }: { nextPath: string; confir
   }
 
   return (
-    <form className={styles.form} onSubmit={onSubmit} noValidate>
+    <form className={styles.form} onSubmit={onSubmit} noValidate aria-busy={pending}>
       <label>
         Email
         <input name="email" type="email" autoComplete="username" required maxLength={254} />
@@ -51,10 +51,17 @@ export function LoginForm({ nextPath, confirmError }: { nextPath: string; confir
           {error}
         </p>
       ) : null}
+      {pending ? (
+        <p className={styles.pending} role="status">
+          Signing in…
+        </p>
+      ) : null}
       <button type="submit" disabled={pending}>
         {pending ? "Signing in…" : "Sign in"}
       </button>
-      <Link href="/register">Create an account</Link>
+      <Link className={styles.textLink} href="/register">
+        Create an account
+      </Link>
     </form>
   );
 }

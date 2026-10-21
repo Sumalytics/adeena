@@ -12,10 +12,10 @@
 }
 
 .shell {
-  max-width: 40rem;
+  max-width: 32.5rem;
   margin: 0 auto;
-  padding: 1rem 1rem 3rem;
-  overflow-wrap: anywhere;
+  padding: 1rem 1rem 2.5rem;
+  overflow-wrap: break-word;
 }
 
 .title,
@@ -40,6 +40,23 @@
   margin: 0 0 1rem;
 }
 
+.meterList {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  padding: 0;
+  list-style: none;
+}
+
+.meterList li {
+  margin: 0;
+  padding: 0.4rem 0.75rem;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  font-size: 0.92rem;
+}
+
 .progress {
   color: var(--forest);
   font-weight: 700;
@@ -61,7 +78,7 @@
 
 .world {
   position: relative;
-  width: 100%;
+  width: min(100%, 22.5rem);
   aspect-ratio: 3 / 2;
   margin: 0 0 1rem;
   background: #f3e4cf;
@@ -113,7 +130,6 @@
   outline-offset: 2px;
 }
 
-.meterList,
 .summaryList {
   padding-left: 1.15rem;
 }
@@ -158,20 +174,20 @@
 .begin,
 .replay,
 .choice {
-  min-height: 2.75rem;
+  display: block;
+  width: 100%;
+  height: auto;
+  min-height: 3rem;
   padding: 0.75rem 1rem;
   border: 0;
   background: var(--forest-deep);
   color: var(--cream);
   font: inherit;
+  line-height: 1.35;
   text-align: left;
+  white-space: normal;
+  overflow-wrap: break-word;
   cursor: pointer;
-}
-
-.choice,
-.replay,
-.begin {
-  width: 100%;
 }
 
 .choice:hover,
@@ -179,6 +195,13 @@
 .replay:hover {
   background: var(--forest);
   color: var(--cream);
+}
+
+.choice:focus-visible,
+.begin:focus-visible,
+.replay:focus-visible {
+  outline: 3px solid var(--orange);
+  outline-offset: 2px;
 }
 
 .choice:disabled,

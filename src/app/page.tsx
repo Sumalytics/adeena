@@ -14,7 +14,9 @@ export default function Home() {
         <Link className={styles.enter} href="/studio">
           Open Creator Studio
         </Link>
-        <Link href="/login">Sign in</Link>
+        <Link href="/login" className={styles.signIn}>
+          Sign in
+        </Link>
       </div>
     </main>
   );

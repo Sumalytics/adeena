@@ -12,7 +12,7 @@ export default function LoginPage({ searchParams }: { searchParams: Promise<{ ne
       <p className={page.brand}>adeena</p>
       <h1 className={page.title}>Sign in</h1>
       <p className={page.lead}>Use the email and password for your creator account.</p>
-      <Suspense fallback={<p>Loading sign in…</p>}>
+      <Suspense fallback={<LoginForm nextPath={safeNextPath(null)} confirmError={false} />}>
         <LoginFields searchParams={searchParams} />
       </Suspense>
     </main>

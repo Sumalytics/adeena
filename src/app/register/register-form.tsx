@@ -65,7 +65,9 @@ export function RegisterForm() {
       <button type="submit" disabled={pending}>
         {pending ? "Creating account…" : "Create account"}
       </button>
-      <Link href="/login">Sign in</Link>
+      <Link className={styles.textLink} href="/login">
+        Sign in
+      </Link>
     </form>
   );
 }

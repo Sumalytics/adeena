@@ -23,6 +23,7 @@ export function presentPlayer(session: PlayerSession, presentation: ExperiencePr
       locale: session.game.manifest.locale,
       title: session.game.manifest.title,
       intro: presentation.intro,
+      meters: meters(session, presentation),
     };
   }
 

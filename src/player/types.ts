@@ -66,7 +66,7 @@ export type PlayerSummaryItem = {
 
 export type PlayerView =
   | { kind: "unavailable"; message: string }
-  | { kind: "cover"; locale: string; title: string; intro: string }
+  | { kind: "cover"; locale: string; title: string; intro: string; meters: readonly PlayerMeter[] }
   | {
       kind: "scene" | "ending";
       locale: string;

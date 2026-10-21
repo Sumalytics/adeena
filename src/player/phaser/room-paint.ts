@@ -40,11 +40,15 @@ export function paintResourceRoom(
   painter.fill(colors.plaster);
   painter.rect(0, 0, 360, 168);
   painter.fill(colors.plasterShade);
+  painter.rect(0, 0, 360, 12);
   painter.rect(0, 150, 360, 18);
+  painter.fill(colors.plasterShade);
+  painter.roundRect(132, 40, 144, 90, 4);
   painter.fill(colors.floor);
   painter.rect(0, 168, 360, 72);
   painter.fill(colors.floorLine);
   painter.rect(0, 168, 360, 4);
+  painter.rect(0, 204, 360, 3);
 
   painter.fill(colors.cream);
   painter.rect(16, 14, 78, 58);

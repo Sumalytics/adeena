@@ -59,7 +59,9 @@ describe("source ingestion stays off the client and Studio routes", () => {
 
   it("keeps the Studio file control on the device", () => {
     const source = readFileSync(path.join(process.cwd(), "src/app/studio/studio-app.tsx"), "utf8");
-    expect(source).toContain("The file stays on this device and was not uploaded.");
+    expect(source).toContain("The file stays on this device. Nothing is uploaded.");
+    expect(source).toContain("Not uploaded");
+    expect(source).not.toContain("Uploading");
     expect(source).toContain("Generate preview");
   });
 });

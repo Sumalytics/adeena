@@ -15,7 +15,7 @@ export type StudioDraft<Preview> = {
   sourceLabel: string;
   audienceLabel: string;
   ageBand: string;
-  fileNote: string;
+  fileName: string;
   preview: Preview | null;
   optionId: string;
   scoreText: string;
@@ -27,7 +27,7 @@ export type StudioAction<Preview> =
   | { type: "source"; value: string }
   | { type: "audience"; value: string }
   | { type: "age"; value: string }
-  | { type: "file"; note: string; sourceLabel?: string }
+  | { type: "file"; name: string; sourceLabel?: string }
   | { type: "preview"; preview: Preview }
   | { type: "preview-error"; message: string }
   | { type: "score"; text: string }
@@ -40,7 +40,7 @@ export function initialStudioDraft<Preview>(): StudioDraft<Preview> {
     sourceLabel: "",
     audienceLabel: "",
     ageBand: "",
-    fileNote: "",
+    fileName: "",
     preview: null,
     optionId: "",
     scoreText: "",
@@ -98,7 +98,7 @@ export function studioReducer<Preview>(
     case "file":
       return withoutPreview({
         ...state,
-        fileNote: action.note,
+        fileName: action.name,
         sourceLabel: action.sourceLabel ?? state.sourceLabel,
       });
     case "preview":

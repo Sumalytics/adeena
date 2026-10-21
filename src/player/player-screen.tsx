@@ -2,7 +2,20 @@
 
 import { useEffect, useRef } from "react";
 import styles from "./player.module.css";
-import type { ExperienceRenderer, PlayerView } from "./types";
+import type { ExperienceRenderer, PlayerMeter, PlayerView } from "./types";
+
+function MeterList({ meters }: { meters: readonly PlayerMeter[] }) {
+  if (meters.length === 0) return null;
+  return (
+    <ul className={styles.meterList} aria-label="Current situation">
+      {meters.map((meter) => (
+        <li key={meter.id}>
+          {meter.label}: {meter.value}
+        </li>
+      ))}
+    </ul>
+  );
+}
 
 export function PlayerScreen({
   view,
@@ -39,6 +52,7 @@ export function PlayerScreen({
       <main id="content" className={styles.shell} lang={view.locale} data-renderer={renderer.kind}>
         <h1 className={styles.title}>{view.title}</h1>
         <p className={styles.intro}>{view.intro}</p>
+        <MeterList meters={view.meters} />
         <button type="button" className={styles.begin} onClick={onBegin}>
           Begin
         </button>
@@ -70,15 +84,7 @@ export function PlayerScreen({
           {view.sceneTitle}
         </h2>
         <p className={styles.narrative}>{view.narrative}</p>
-        {view.meters.length > 0 ? (
-          <ul className={styles.meterList} aria-label="Current situation">
-            {view.meters.map((meter) => (
-              <li key={meter.id}>
-                {meter.label}: {meter.value}
-              </li>
-            ))}
-          </ul>
-        ) : null}
+        <MeterList meters={view.meters} />
         <div aria-live="polite" aria-atomic="true">
           {showConsequence ? (
             <div className={styles.consequence}>

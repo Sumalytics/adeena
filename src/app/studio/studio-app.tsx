@@ -39,7 +39,7 @@ export function StudioApp() {
   const idempotencyKey = useRef<string | null>(null);
   const [draft, dispatch] = useReducer(studioReducer<Preview>, undefined, initialStudioDraft);
   const [pending, setPending] = useState<"preview" | "score" | "share" | null>(null);
-  const { sourceLabel, audienceLabel, ageBand, fileNote, error, preview, optionId, scoreText, shareReasons } = draft;
+  const { sourceLabel, audienceLabel, ageBand, fileName, error, preview, optionId, scoreText, shareReasons } = draft;
 
   const ready = canGeneratePreview(draft);
   const currentStep = shareReasons ? 3 : preview ? 2 : pending === "preview" ? 1 : 0;
@@ -199,21 +199,15 @@ export function StudioApp() {
                 const file = event.target.files?.[0];
                 if (!file) return;
                 rememberEdit();
-                if (sourceLabel.trim()) {
-                  dispatch({
-                    type: "file",
-                    note: "The file stays on this device and was not uploaded. The source note was kept.",
-                  });
-                } else {
-                  dispatch({
-                    type: "file",
-                    note: "The file stays on this device. Only its name was used as the source.",
-                    sourceLabel: file.name,
-                  });
-                }
+                dispatch({
+                  type: "file",
+                  name: file.name,
+                  sourceLabel: sourceLabel.trim() ? undefined : file.name,
+                });
               }}
             />
-            {fileNote ? <p className={styles.hint}>{fileNote}</p> : null}
+            <p className={styles.hint}>The file stays on this device. Nothing is uploaded.</p>
+            {fileName ? <p className={styles.fileState}>{fileName} · Not uploaded</p> : null}
           </div>
           <div className={styles.pair}>
             <div className={styles.field}>
@@ -257,9 +251,14 @@ export function StudioApp() {
               </select>
             </div>
           </div>
+          {pending === "preview" ? (
+            <p className={styles.notice} role="status">
+              Preparing a synthetic preview from the source note. No model is being called.
+            </p>
+          ) : null}
           <div className={styles.actions}>
             <button type="submit" disabled={!ready || pending !== null}>
-              {pending === "preview" ? "Generating…" : "Generate preview"}
+              {pending === "preview" ? "Generating…" : error ? "Try again" : "Generate preview"}
             </button>
           </div>
           {error ? (
@@ -296,7 +295,11 @@ export function StudioApp() {
                 Share
               </button>
             </div>
-            {scoreText ? <p className={styles.notice}>{scoreText}</p> : null}
+            {scoreText ? (
+              <p className={styles.notice} role="status">
+                {scoreText}
+              </p>
+            ) : null}
             <p className={styles.hint}>
               Version {preview.version}. Recorded cost {preview.cost.currency}{" "}
               {(preview.cost.minor / 100).toFixed(2)} ({preview.cost.status}). No model was called.
@@ -309,6 +312,7 @@ export function StudioApp() {
                     <li key={reason}>{reason}</li>
                   ))}
                 </ul>
+                <p>The preview stays on this page. Share does not open another route.</p>
               </div>
             ) : null}
             <fieldset disabled>
