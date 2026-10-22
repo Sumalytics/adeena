@@ -78,7 +78,7 @@ describe("creator workflow screen", () => {
     expect(html).toContain("Create playable experience");
     expect(html).toContain("Development fixture");
     expect(html).toContain("not live AI generation");
-    expect(html).toContain("Public sharing is not available yet.");
+    expect(html).toContain("Open a private preview to review, approve and share an eligible version.");
     expect(html).toContain("rivers.md");
     expect(html).not.toContain("/api/creator/experiences");
     const source = readFileSync("src/app/creator/workflow-editor.tsx", "utf8");

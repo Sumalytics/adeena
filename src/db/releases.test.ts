@@ -18,7 +18,7 @@ import { enqueueDurableSource, grantMembership } from "./source-repository";
 import { runExtractionOnce } from "./worker";
 import { recommendFirstTopic } from "./topic-repository";
 import { createPlayableExperience } from "./experience-repository";
-import { publishRelease, readPublicRelease, revokeRelease } from "./release-repository";
+import { publishRelease, readPublicRelease, revokeRelease, clearSourceRights, publicationStatus } from "./release-repository";
 import { acceptExperienceEdit, proposeExperienceEdit } from "./edit-repository";
 
 describe("public releases on an isolated database", () => {
@@ -211,6 +211,46 @@ describe("public releases on an isolated database", () => {
     expect(() => publicReleaseManifest({}, randomUUID())).toThrow();
     expect(() => publicReleaseManifest({ ...row.manifest, title: "Medication dosage" }, randomUUID())).toThrow();
     expect(() => publicReleaseManifest({ ...row.manifest, title: "private://secret" }, randomUUID())).toThrow();
+  });
+
+  it("records explicit rights evidence without rewriting source and permits ordinary creator publication", async () => {
+    const room = await fixture("unverified");
+    const before = await publicationStatus({ ...room, versionId: room.versionId });
+    expect(before.blocks).toContain("rights-clearance-required");
+    const body = { experienceVersionId: room.versionId, basis: "creator-owned", evidence: "I authored this water passage and permit its public adaptation.", permitsPublicAdaptation: true };
+    await expect(clearSourceRights({ ...room, body: { ...body, permitsPublicAdaptation: false } })).rejects.toMatchObject({ code: "invalid-publication" });
+    const other = await fixture();
+    await expect(clearSourceRights({ ...other, body })).rejects.toMatchObject({ code: "publication-denied" });
+    const editor = issueIdentityForIsolatedTests(randomUUID());
+    await grantMembership(sql, room.identity, { workspaceId: room.workspaceId, userId: editor.userId, role: "editor" });
+    await expect(clearSourceRights({ ...room, identity: editor, body })).rejects.toMatchObject({ code: "publication-denied" });
+    await clearSourceRights({ ...room, body });
+    await clearSourceRights({ ...room, body: { ...body, evidence: "A different note must not replace the original evidence." } });
+    expect((await publicationStatus({ ...room, versionId: room.versionId })).eligible).toBe(true);
+    const [source] = await admin`select rights_status from source_document_versions where id = ${room.documentVersionId}`;
+    expect(source.rights_status).toBe("unverified");
+    const [record] = await admin`select * from source_rights_clearances where document_version_id = ${room.documentVersionId}`;
+    expect(record.evidence).toBe(body.evidence);
+    expect(record.recorded_by).toBe(room.userId);
+    expect(record.recorded_at).toBeTruthy();
+    expect(await sql`select * from source_rights_clearances`).toHaveLength(0);
+    await expect(withWorkspace(sql, room.identity, room.workspaceId, ({ tx }) => tx`update source_rights_clearances set evidence = 'Changed evidence is forbidden' where id = ${record.id}`)).rejects.toThrow();
+    const published = await publishRelease(room);
+    const publicText = JSON.stringify(await readPublicRelease(sql, published.releaseId));
+    expect(publicText).not.toContain(body.evidence);
+    expect(publicText).not.toContain(room.documentVersionId);
+    await admin`update topic_candidates set reasons = '["sensitive-domain"]'::jsonb where id = ${room.topicCandidateId}`;
+    expect((await publicationStatus({ ...room, versionId: room.versionId })).blocks).toContain("independent-review-required");
+    await expect(publishRelease(room)).rejects.toMatchObject({ code: "publication-denied" });
+  });
+
+  it("accepts a licence record but does not override independent edit review", async () => {
+    const room = await fixture("unverified");
+    await clearSourceRights({ ...room, body: { experienceVersionId: room.versionId, basis: "licensed", evidence: "Written licence from the author permits public adaptation and sharing.", permitsPublicAdaptation: true } });
+    const edit = await proposeExperienceEdit({ ...room, baseVersionId: room.versionId, expectedBaseVersionId: room.versionId, idempotencyKey: randomUUID(), instruction: "Simplify the dialogue.", authorizeEdit: true, provider: "deterministic-fixture" });
+    if (edit.kind !== "ready" || !edit.proposal.proposedVersionId) throw new Error("edit missing");
+    await acceptExperienceEdit({ ...room, editJobId: edit.proposal.editJobId, expectedBaseVersionId: room.versionId });
+    expect((await publicationStatus({ ...room, versionId: edit.proposal.proposedVersionId })).blocks).toContain("version-review-required");
   });
 
   it("can reverse and reapply migrations in the disposable database", async () => {

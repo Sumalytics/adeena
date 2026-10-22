@@ -59,10 +59,10 @@ export async function CreatorSession() {
         <li className={styles.step}>
           <small>4</small>
           <strong>Share</strong>
-          <small>Not available yet</small>
+          <small>In private preview</small>
         </li>
       </ol>
-      <p className={styles.shareNote}>Public sharing is not available yet. Drafts stay private.</p>
+      <p className={styles.shareNote}>Open a private preview to review, approve and share an eligible version. Draft edits stay private.</p>
       <section className={styles.stage} aria-labelledby="experiences-heading">
         <div className={styles.stageHeader}>
           <h2 id="experiences-heading">Your experiences</h2>

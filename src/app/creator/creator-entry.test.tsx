@@ -14,7 +14,7 @@ describe("creator entry", () => {
     expect(session).toContain("Share");
     expect(create).toContain("Create new experience");
     expect(session).toContain("Your experiences");
-    expect(session).toContain("Public sharing is not available yet.");
+    expect(session).toContain("Open a private preview to review, approve and share an eligible version.");
     expect(session).toContain("Private");
     expect(session).toContain('redirect("/login?next=/creator")');
     expect(session).not.toContain('href="/studio"');

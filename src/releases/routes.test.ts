@@ -3,16 +3,17 @@ import { NextRequest } from "next/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { sharedShelf } from "@adeena/experience-schema";
 
-const mocks = vi.hoisted(() => ({ read: vi.fn(), database: vi.fn(), session: vi.fn(), publish: vi.fn(), revoke: vi.fn(), authConfig: vi.fn() }));
+const mocks = vi.hoisted(() => ({ read: vi.fn(), database: vi.fn(), session: vi.fn(), publish: vi.fn(), revoke: vi.fn(), authConfig: vi.fn(), status: vi.fn(), rights: vi.fn() }));
 vi.mock("@/auth/database", () => ({ creatorDatabase: mocks.database }));
 vi.mock("@/auth/session", () => ({ readVerifiedSession: mocks.session }));
 vi.mock("@/auth/public-config", () => ({ supabaseBrowserConfig: mocks.authConfig }));
 vi.mock("@/db/release-repository", () => ({ readPublicRelease: mocks.read }));
-vi.mock("@/auth/releases", () => ({ creatorPublishResponse: mocks.publish, creatorRevokeResponse: mocks.revoke }));
+vi.mock("@/auth/releases", () => ({ creatorPublishResponse: mocks.publish, creatorRevokeResponse: mocks.revoke, creatorPublicationStatusResponse: mocks.status, creatorRightsResponse: mocks.rights }));
 vi.mock("next/server", async (original) => ({ ...await original<typeof import("next/server")>(), connection: vi.fn() }));
 
 import { GET } from "@/app/api/releases/[releaseId]/route";
-import { POST } from "@/app/api/creator/releases/route";
+import { POST, GET as GET_STATUS } from "@/app/api/creator/releases/route";
+import { POST as POST_RIGHTS } from "@/app/api/creator/releases/rights/route";
 import { DELETE } from "@/app/api/creator/releases/[releaseId]/route";
 import { proxy } from "@/proxy";
 
@@ -45,6 +46,24 @@ describe("release HTTP boundaries", () => {
       expect(response.headers.get("location")).toBeNull();
     }
     expect(mocks.authConfig).not.toHaveBeenCalled();
+  });
+
+  it("protects eligibility and clearance with verified sessions and same-origin mutations", async () => {
+    const versionId = randomUUID();
+    const url = `https://adeena.test/api/creator/releases?versionId=${versionId}`;
+    mocks.session.mockResolvedValue(null);
+    expect((await GET_STATUS(new Request(url))).status).toBe(401);
+    expect((await POST_RIGHTS(new Request(url, { method: "POST", headers: { origin: "https://adeena.test" }, body: "{}" }))).status).toBe(401);
+    mocks.session.mockClear();
+    expect((await POST_RIGHTS(new Request(url, { method: "POST", headers: { origin: "https://untrusted.test" } }))).status).toBe(403);
+    expect(mocks.session).not.toHaveBeenCalled();
+    expect(mocks.database).not.toHaveBeenCalled();
+    mocks.session.mockResolvedValue({ identity: {} });
+    mocks.status.mockResolvedValue({ status: 200, body: { eligible: false, blocks: ["rights-clearance-required"] } });
+    const response = await GET_STATUS(new Request(url));
+    expect(response.headers.get("cache-control")).toContain("no-store");
+    expect(mocks.status).toHaveBeenCalledWith(expect.objectContaining({ versionId }));
+    expect((await response.json()).eligible).toBe(false);
   });
 
   it("fails closed without leaking database errors", async () => {

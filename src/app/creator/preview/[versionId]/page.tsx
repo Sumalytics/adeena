@@ -11,6 +11,7 @@ import { readVerifiedSession } from "@/auth/session";
 import styles from "../../../auth.module.css";
 import page from "../../../page.module.css";
 import { ExperienceEditor } from "../experience-editor";
+import { ExperienceShare } from "../experience-share";
 import { ExperiencePreview } from "../experience-preview";
 
 export const metadata: Metadata = { title: "Private preview", robots: { index: false, follow: false } };
@@ -56,12 +57,12 @@ async function PreviewSession({ params }: { params: Promise<{ versionId: string 
   const timingLabel = `workspace=${timing.workspaceMs} preview=${timing.previewMs} history=${timing.historyMs} parallel=${timing.parallelMs} original=${timing.originalMs}`;
   const isProposal = preview.edit?.status === "ready" && !preview.isCurrent && Boolean(preview.parentVersionId);
   const notice = [
-    "Private unpublished draft. There is no public link.",
+    "Private draft preview. Publication and source clearance are shown in Share below.",
     "The picture is a simple frame, not a custom animation.",
     preview.provider === FIXTURE_PROVIDER ? "Compiled from the source by the local fixture. This is not a live model result." : "",
     preview.provider === CONFIGURED_PROVIDER ? "A configured model proposed this revision. The server checked the draft. This does not certify it for children or a classroom." : "",
-    preview.rightsStatus === "cleared" ? "" : "Source rights are not cleared.",
-    preview.reviewStatus === "review-required" ? "This draft still needs a person to review it." : "",
+    
+    
   ].filter(Boolean).join(" ");
   const currentVersionId = history.find((item) => item.current)?.id ?? null;
   return (
@@ -88,6 +89,7 @@ async function PreviewSession({ params }: { params: Promise<{ versionId: string 
         currentVersionId={currentVersionId}
       />
       {isProposal ? null : <ExperiencePreview manifest={preview.manifest} notice={notice} />}
+      <ExperienceShare key={versionId} versionId={versionId} />
     </>
   );
 }

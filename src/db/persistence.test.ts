@@ -106,7 +106,7 @@ describe("postgresql source persistence", () => {
   afterAll(async () => {
     try {
       if (ready && admin) {
-        await admin`TRUNCATE experience_releases, creator_workflows, experience_edit_events, experience_edit_costs, experience_current_drafts, experience_edit_jobs, experience_generation_costs, experience_validation_results, experience_plans, experience_versions, experience_generation_jobs, recommendation_runs, topic_candidates, topic_overrides, source_processing_costs, knowledge_nodes, source_spans, knowledge_collections, extraction_results, extraction_jobs, source_document_versions, source_documents, workspace_memberships, workspaces`;
+        await admin`TRUNCATE source_rights_clearances, experience_releases, creator_workflows, experience_edit_events, experience_edit_costs, experience_current_drafts, experience_edit_jobs, experience_generation_costs, experience_validation_results, experience_plans, experience_versions, experience_generation_jobs, recommendation_runs, topic_candidates, topic_overrides, source_processing_costs, knowledge_nodes, source_spans, knowledge_collections, extraction_results, extraction_jobs, source_document_versions, source_documents, workspace_memberships, workspaces`;
       }
     } finally {
       if (admin) await admin.end({ timeout: 1 });

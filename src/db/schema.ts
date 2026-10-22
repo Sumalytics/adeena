@@ -200,3 +200,14 @@ export const sourceProcessingCosts = pgTable("source_processing_costs", {
   aiGenerationAuthorized: boolean("ai_generation_authorized").notNull(),
   createdAt: timestamps.createdAt,
 });
+
+export const sourceRightsClearances = pgTable("source_rights_clearances", {
+  id: uuid("id").primaryKey(),
+  workspaceId: uuid("workspace_id").notNull(),
+  documentVersionId: uuid("document_version_id").notNull(),
+  basis: text("basis").notNull(),
+  evidence: text("evidence").notNull(),
+  permitsPublicAdaptation: boolean("permits_public_adaptation").notNull(),
+  recordedBy: uuid("recorded_by").notNull(),
+  recordedAt: timestamp("recorded_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
+});

@@ -241,9 +241,9 @@ export function WorkflowEditor({
         <li className={styles.step} aria-current={step === "choose" ? "step" : undefined}><small>1</small><strong>Choose</strong></li>
         <li className={styles.step} aria-current={step === "generate" ? "step" : undefined}><small>2</small><strong>Generate</strong></li>
         <li className={styles.step} aria-current={step === "preview" ? "step" : undefined}><small>3</small><strong>Preview</strong></li>
-        <li className={styles.step}><small>4</small><strong>Share</strong><small>Not available yet</small></li>
+        <li className={styles.step}><small>4</small><strong>Share</strong><small>In private preview</small></li>
       </ol>
-      <p className={styles.shareNote}>Public sharing is not available yet. Drafts stay private.</p>
+      <p className={styles.shareNote}>Open a private preview to review, approve and share an eligible version. Draft edits stay private.</p>
       {saved ? <p className={styles.note} role="status">{saved}</p> : null}
       {error ? <p className={styles.alert} role="alert">{error}</p> : null}
       {stale ? (

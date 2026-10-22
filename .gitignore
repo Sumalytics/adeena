@@ -43,3 +43,6 @@ next-env.d.ts
 
 # private creator originals and canonical text
 /data/
+
+# isolated local demonstration artifacts
+/.local/

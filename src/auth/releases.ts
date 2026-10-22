@@ -1,6 +1,6 @@
 import type { Sql } from "postgres";
 import { ensureIndividualWorkspace } from "@/db/creator";
-import { publishRelease, revokeRelease } from "@/db/release-repository";
+import { publishRelease, revokeRelease, publicationStatus, clearSourceRights } from "@/db/release-repository";
 import { ReleaseError } from "@/releases/contract";
 import { SourceError } from "@/source/errors";
 import type { CreatorSession } from "./subject";
@@ -17,7 +17,7 @@ async function respond(input: Input, run: (workspaceId: string) => Promise<unkno
       return { status: error.code === "invalid-publication" ? 400 : error.code === "release-unavailable" ? 404 : 403, body: { error: error.code } };
     }
     if (error instanceof SourceError) return { status: 403, body: { error: "publication-denied" } };
-    throw error;
+    return { status: 503, body: { error: "publication-unavailable" } };
   }
 }
 
@@ -27,4 +27,12 @@ export function creatorPublishResponse(input: Input & { body: unknown }) {
 
 export function creatorRevokeResponse(input: Input & { releaseId: string }) {
   return respond(input, (workspaceId) => revokeRelease({ ...input, workspaceId, identity: input.session!.identity }));
+}
+
+export function creatorPublicationStatusResponse(input: Input & { versionId: string }) {
+  return respond(input, (workspaceId) => publicationStatus({ ...input, workspaceId, identity: input.session!.identity }));
+}
+
+export function creatorRightsResponse(input: Input & { body: unknown }) {
+  return respond(input, (workspaceId) => clearSourceRights({ ...input, workspaceId, identity: input.session!.identity }));
 }
