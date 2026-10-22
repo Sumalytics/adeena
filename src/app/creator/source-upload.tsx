@@ -30,7 +30,19 @@ function rightsLabel(status: ExtractedSourceSummary["rightsStatus"]) {
   return "Rights not verified";
 }
 
-export function SourceUpload({ sources }: { sources: ExtractedSourceSummary[] }) {
+function usableSource(source: ExtractedSourceSummary) {
+  return source.rightsStatus !== "blocked" && (source.extractionStatus === "complete" || source.extractionStatus === "partial");
+}
+
+export function SourceUpload({
+  sources,
+  selection,
+  afterList,
+}: {
+  sources: ExtractedSourceSummary[];
+  selection?: { value: string | null; onChange: (documentVersionId: string) => void };
+  afterList?: ReactNode;
+}) {
   const router = useRouter();
   const key = useRef(crypto.randomUUID());
   const [pending, setPending] = useState(false);
@@ -39,6 +51,7 @@ export function SourceUpload({ sources }: { sources: ExtractedSourceSummary[] })
   const waiting = sources.some((source) => source.extractionStatus === "pending" && source.rightsStatus !== "blocked");
   const extracted = sources.some((source) => source.extractionStatus === "complete" || source.extractionStatus === "partial");
   const formOpen = sources.length === 0 || (!waiting && !extracted);
+  const uploadClass = selection && sources.some(usableSource) ? styles.secondary : styles.button;
 
   async function upload(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -100,7 +113,7 @@ export function SourceUpload({ sources }: { sources: ExtractedSourceSummary[] })
           <option value="blocked">Rights are blocked</option>
         </select>
       </label>
-      <button className={styles.button} type="submit" disabled={pending}>{pending ? "Working on your source…" : "Upload source"}</button>
+      <button className={uploadClass} type="submit" disabled={pending}>{pending ? "Working on your source…" : "Upload source"}</button>
       <p className={styles.help} id="upload-limits">
         Use a text, Markdown, DOCX, or text-layer PDF. The file is stored privately.
         Extraction does not clear source rights, and it does not generate a game.
@@ -130,22 +143,46 @@ export function SourceUpload({ sources }: { sources: ExtractedSourceSummary[] })
       </div>
       {sources.length === 0 ? <p className={styles.empty}>No source yet.</p> : (
         <ul className={styles.cards}>
-          {sources.map((source) => (
-            <li className={styles.card} key={source.documentVersionId}>
-              <p className={styles.status}>{statusLabel(source)}</p>
-              <h3>{source.filename}</h3>
-              <p className={styles.meta}>{rightsLabel(source.rightsStatus)} · {source.byteCount} bytes</p>
-              {source.extractionStatus === "pending" && source.rightsStatus !== "blocked" ? (
-                <div className={styles.actions}>
-                  <button className={styles.secondary} type="button" disabled={pending} onClick={() => void continueProcessing(source.documentVersionId)}>
-                    Continue processing
-                  </button>
-                </div>
-              ) : null}
-            </li>
-          ))}
+          {sources.map((source) => {
+            const chosen = selection?.value === source.documentVersionId;
+            const card = (
+              <>
+                <p className={styles.status}>{statusLabel(source)}</p>
+                <h3>{source.filename}</h3>
+                <p className={styles.meta}>{rightsLabel(source.rightsStatus)} · {source.byteCount} bytes</p>
+              </>
+            );
+            return (
+              <li className={styles.card} key={source.documentVersionId} data-selected={chosen ? "true" : undefined}>
+                {selection && usableSource(source) ? (
+                  <label className={styles.sourceCard}>
+                    <input
+                      type="radio"
+                      name="workflow-source"
+                      value={source.documentVersionId}
+                      checked={chosen}
+                      aria-label={chosen ? `${source.filename} selected` : `Select ${source.filename}`}
+                      onChange={() => selection.onChange(source.documentVersionId)}
+                    />
+                    <span>
+                      {card}
+                      <span className={styles.meta}>{chosen ? "Selected" : "Select this source"}</span>
+                    </span>
+                  </label>
+                ) : card}
+                {source.extractionStatus === "pending" && source.rightsStatus !== "blocked" ? (
+                  <div className={styles.actions}>
+                    <button className={styles.secondary} type="button" disabled={pending} onClick={() => void continueProcessing(source.documentVersionId)}>
+                      Continue processing
+                    </button>
+                  </div>
+                ) : null}
+              </li>
+            );
+          })}
         </ul>
       )}
+      {afterList}
       {error ? <p className={styles.alert} role="alert">{error}</p> : null}
       {pending ? <p className={styles.note} role="status">Working on your source.</p> : null}
       {result ? (

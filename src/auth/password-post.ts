@@ -40,7 +40,7 @@ function consume(key: string, limit: number, now: number) {
   return true;
 }
 
-function originAllowed(request: Request) {
+export function requestOriginAllowed(request: Request) {
   let expected: string;
   try {
     expected = new URL(request.url).origin;
@@ -71,7 +71,7 @@ function declaredLength(request: Request) {
 }
 
 export function rejectPasswordPost(request: Request, page: "/login" | "/register") {
-  if (request.method !== "POST" || !formContentType(request) || !declaredLength(request) || !originAllowed(request)) {
+  if (request.method !== "POST" || !formContentType(request) || !declaredLength(request) || !requestOriginAllowed(request)) {
     return seeOther(request, page, { error: "rejected" });
   }
   return null;

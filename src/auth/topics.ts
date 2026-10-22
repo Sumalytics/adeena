@@ -39,6 +39,21 @@ export async function listCreatorSources(identity: VerifiedIdentity, workspaceId
   return listExtractedSources(creatorDatabase(), identity, workspaceId);
 }
 
+export async function readCreatorTopic(
+  identity: VerifiedIdentity,
+  workspaceId: string,
+  input: { documentVersionId: string; audienceLabel: string; ageBand: AgeBand },
+) {
+  return readTopicRecommendation({
+    sql: creatorDatabase(),
+    identity,
+    workspaceId,
+    documentVersionId: input.documentVersionId,
+    audienceLabel: input.audienceLabel,
+    ageBand: input.ageBand,
+  });
+}
+
 function failure(error: unknown) {
   if (error instanceof SourceError && error.code === "unauthenticated") {
     return { status: 401 as const, body: { error: "unauthenticated" } };

@@ -42,6 +42,7 @@ export async function createPlayableExperience(input: {
   authorizeGeneration: true;
   provider: typeof FIXTURE_PROVIDER;
   compiler?: (source: GenerationSource) => Compilation;
+  replayedConflict?: boolean;
 }) {
   assertGeneration(input);
   try {
@@ -90,6 +91,9 @@ export async function createPlayableExperience(input: {
     if (prepared.kind === "stop") throw new SourceError(prepared.code);
     return finish(input, prepared);
   } catch (error) {
+    if (!input.replayedConflict && postgresCode(error) === "23505") {
+      return createPlayableExperience({ ...input, replayedConflict: true });
+    }
     rethrow(error);
   }
 }
@@ -169,6 +173,33 @@ export async function listPlayableDrafts(sql: Sql, identity: VerifiedIdentity, w
           liveModel: false,
         }];
       });
+    });
+  } catch (error) {
+    rethrow(error);
+  }
+}
+
+export async function readPlayableGeneration(input: {
+  sql: Sql;
+  identity: VerifiedIdentity;
+  workspaceId: string;
+  jobId?: string | null;
+  idempotencyKey?: string | null;
+}) {
+  if (input.jobId && !Uuid.safeParse(input.jobId).success) throw new SourceError("invalid-generation");
+  if (input.idempotencyKey && !Uuid.safeParse(input.idempotencyKey).success) throw new SourceError("invalid-generation");
+  if (!input.jobId && !input.idempotencyKey) return null;
+  try {
+    return await withWorkspace(input.sql, input.identity, input.workspaceId, async (workspace) => {
+      const rows = await workspace.tx<{ id: string }[]>`
+        select id::text from experience_generation_jobs
+        where workspace_id = ${input.workspaceId}::uuid
+          and (${input.jobId ?? null}::uuid is null or id = ${input.jobId ?? null}::uuid)
+          and (${input.idempotencyKey ?? null}::uuid is null or idempotency_key = ${input.idempotencyKey ?? null}::uuid)
+      `;
+      const job = rows[0];
+      if (!job) return null;
+      return present(workspace, job.id, true);
     });
   } catch (error) {
     rethrow(error);
@@ -291,14 +322,13 @@ async function loadSource(workspace: AuthorizedWorkspace, input: {
   const version = versions[0];
   if (!version) throw new SourceError("cross-workspace");
   if (version.rights_status === "blocked") throw new SourceError("rights-blocked");
-  // Audience-scoping defect, left unchanged for the generation task: this reads the
-  // newest active recommendation on the document and does not match the requested
-  // audience or age band. Two workflows on one source can therefore be judged by
-  // each other's run. The later task must load the workflow's own run and keep
-  // the rights, review, eligibility, and extraction checks below.
   const runs = await workspace.tx<{ status: string; reasons: unknown }[]>`
     select status, reasons from recommendation_runs
-    where workspace_id = ${workspace.workspaceId}::uuid and document_version_id = ${input.documentVersionId}::uuid and active = true
+    where workspace_id = ${workspace.workspaceId}::uuid
+      and document_version_id = ${input.documentVersionId}::uuid
+      and audience_label = ${input.audienceLabel}
+      and age_band = ${input.ageBand}
+      and active = true
     order by created_at desc
     limit 1
   `;
@@ -558,6 +588,10 @@ function asCode(value: string | null): SourceErrorCode {
 function publicTitle(value: string | null) {
   if (!value || /<script|javascript:|private:\/\/|https?:\/\//i.test(value)) return "Private draft";
   return value.slice(0, 120);
+}
+
+function postgresCode(error: unknown) {
+  return typeof error === "object" && error !== null && "code" in error ? String(error.code) : "";
 }
 
 function rethrow(error: unknown): never {

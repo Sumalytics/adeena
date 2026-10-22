@@ -5,6 +5,7 @@ import { connection } from "next/server";
 import { redirect } from "next/navigation";
 import { Uuid } from "@/contracts/common";
 import { readCreatorPreview } from "@/auth/experiences";
+import { creatorWorkflowForPreview } from "@/auth/workflows";
 import { CONFIGURED_PROVIDER, FIXTURE_PROVIDER, freeEditAuthorization, selectGenerationProvider } from "@/experience/provider";
 import { readVerifiedSession } from "@/auth/session";
 import styles from "../../../auth.module.css";
@@ -50,6 +51,8 @@ async function PreviewSession({ params }: { params: Promise<{ versionId: string 
     );
   }
   const { preview, history, originalManifest, timing } = result;
+  const workflowId = await creatorWorkflowForPreview(session.identity, versionId, preview.parentVersionId);
+  const backHref = workflowId ? `/creator/w/${workflowId}` : "/creator";
   const timingLabel = `workspace=${timing.workspaceMs} preview=${timing.previewMs} history=${timing.historyMs} parallel=${timing.parallelMs} original=${timing.originalMs}`;
   const isProposal = preview.edit?.status === "ready" && !preview.isCurrent && Boolean(preview.parentVersionId);
   const notice = [
@@ -64,7 +67,7 @@ async function PreviewSession({ params }: { params: Promise<{ versionId: string 
   return (
     <>
       {process.env.ADEENA_PREVIEW_TIMING === "1" ? <div hidden data-preview-timing={timingLabel} /> : null}
-      <p className={page.links}><Link href="/creator">Back to creator</Link></p>
+      <p className={page.links}><Link href={backHref}>{workflowId ? "Back to this experience" : "Back to creator"}</Link></p>
       <ExperienceEditor
         key={isProposal ? "proposal" : preview.isCurrent ? "current" : "kept"}
         versionId={versionId}
