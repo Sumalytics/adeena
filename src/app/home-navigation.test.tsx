@@ -42,6 +42,8 @@ describe("homepage navigation", () => {
     expect(creator).not.toContain('href="/studio"');
     const play = readFileSync("src/app/play/demo/page.tsx", "utf8") + readFileSync("src/app/play/world/page.tsx", "utf8");
     expect(play).not.toContain("readVerifiedSession");
-    expect(config.matcher.join(" ")).not.toContain("/play");
+    // Only release playback needs the proxy, for no-store headers; its guest
+    // bypass is exercised in releases/routes.test.ts without Supabase config.
+    expect(config.matcher.filter((pattern) => pattern.startsWith("/play"))).toEqual(["/play/r/:path*"]);
   });
 });

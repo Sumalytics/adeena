@@ -3,9 +3,13 @@ import { NextResponse, type NextRequest } from "next/server";
 import { safeNextPath } from "@/auth/paths";
 import { supabaseBrowserConfig } from "@/auth/public-config";
 import { isStudioApiPath, isStudioPagePath, studioFixturesAllowed } from "@/studio/availability";
+import { RELEASE_HEADERS } from "@/releases/contract";
 
 export async function proxy(request: NextRequest) {
   const path = request.nextUrl.pathname;
+  if (path.startsWith("/play/r/") || path.startsWith("/api/releases/")) {
+    return NextResponse.next({ headers: RELEASE_HEADERS });
+  }
   const studioApi = isStudioApiPath(path);
   const studioPage = isStudioPagePath(path);
   if ((studioApi || studioPage) && !studioFixturesAllowed()) {
@@ -58,5 +62,5 @@ export async function proxy(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/creator", "/creator/:path*", "/studio", "/studio/:path*", "/login", "/register", "/auth/:path*", "/api/creator", "/api/creator/:path*", "/api/studio", "/api/studio/:path*"],
+  matcher: ["/play/r/:path*", "/api/releases/:path*", "/creator", "/creator/:path*", "/studio", "/studio/:path*", "/login", "/register", "/auth/:path*", "/api/creator", "/api/creator/:path*", "/api/studio", "/api/studio/:path*"],
 };
