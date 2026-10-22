@@ -1,5 +1,6 @@
 import { Suspense } from "react";
 import type { Metadata } from "next";
+import { loginFailureMessage } from "@/auth/password-post";
 import { safeNextPath } from "@/auth/paths";
 import page from "../page.module.css";
 import { LoginForm } from "./login-form";
@@ -21,5 +22,5 @@ export default function LoginPage({ searchParams }: { searchParams: Promise<{ ne
 
 async function LoginFields({ searchParams }: { searchParams: Promise<{ next?: string; error?: string }> }) {
   const params = await searchParams;
-  return <LoginForm nextPath={safeNextPath(params.next ?? null)} confirmError={params.error === "confirm"} />;
+  return <LoginForm nextPath={safeNextPath(params.next ?? null)} message={loginFailureMessage(params.error)} />;
 }

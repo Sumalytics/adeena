@@ -7,10 +7,8 @@ import { createSupabaseBrowser } from "@/auth/browser";
 import { validateCredentials } from "@/auth/credentials";
 import styles from "../auth.module.css";
 
-export function LoginForm({ nextPath, confirmError }: { nextPath: string; confirmError: boolean }) {
-  const [error, setError] = useState<string | null>(
-    confirmError ? "The confirmation link is invalid or expired." : null,
-  );
+export function LoginForm({ nextPath, message }: { nextPath: string; message: string | null }) {
+  const [error, setError] = useState<string | null>(message);
   const [pending, setPending] = useState(false);
   const router = useRouter();
 
@@ -37,7 +35,8 @@ export function LoginForm({ nextPath, confirmError }: { nextPath: string; confir
   }
 
   return (
-    <form className={styles.form} onSubmit={onSubmit} noValidate aria-busy={pending}>
+    <form className={styles.form} method="post" action="/auth/login" onSubmit={onSubmit} noValidate aria-busy={pending}>
+      <input type="hidden" name="next" value={nextPath} />
       <label>
         Email
         <input name="email" type="email" autoComplete="username" required maxLength={254} />

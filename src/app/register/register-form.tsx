@@ -7,9 +7,9 @@ import { createSupabaseBrowser } from "@/auth/browser";
 import { validateCredentials } from "@/auth/credentials";
 import styles from "../auth.module.css";
 
-export function RegisterForm() {
-  const [error, setError] = useState<string | null>(null);
-  const [message, setMessage] = useState<string | null>(null);
+export function RegisterForm({ errorMessage, statusMessage }: { errorMessage: string | null; statusMessage: string | null }) {
+  const [error, setError] = useState<string | null>(errorMessage);
+  const [message, setMessage] = useState<string | null>(statusMessage);
   const [pending, setPending] = useState(false);
   const router = useRouter();
 
@@ -47,7 +47,7 @@ export function RegisterForm() {
   }
 
   return (
-    <form className={styles.form} onSubmit={onSubmit} noValidate>
+    <form className={styles.form} method="post" action="/auth/register" onSubmit={onSubmit} noValidate>
       <label>
         Email
         <input name="email" type="email" autoComplete="email" required maxLength={254} />
