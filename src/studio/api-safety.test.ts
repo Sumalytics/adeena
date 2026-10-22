@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { POST as preview } from "@/app/api/studio/preview/route";
 import { POST as score } from "@/app/api/studio/score/route";
 import { POST as share } from "@/app/api/studio/share/route";
@@ -19,8 +19,16 @@ function call(route: (request: Request) => Response | Promise<Response>, path: s
 }
 
 describe("studio API safety", () => {
+  const previousRuntime = process.env.ADEENA_RUNTIME;
+
   beforeEach(() => {
     clearJobsForTests();
+    process.env.ADEENA_RUNTIME = "local-development";
+  });
+
+  afterEach(() => {
+    if (previousRuntime === undefined) delete process.env.ADEENA_RUNTIME;
+    else process.env.ADEENA_RUNTIME = previousRuntime;
   });
 
   it("rejects malformed, unexpected, and oversized preview bodies", async () => {

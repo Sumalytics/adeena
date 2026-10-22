@@ -15,11 +15,19 @@ describe("verified auth subject", () => {
   });
 
   it("keeps the next path inside the creator area", () => {
+    const development = { NODE_ENV: "development", ADEENA_RUNTIME: "local-development" };
+    const production = { NODE_ENV: "production", ADEENA_RUNTIME: "local-development" };
     expect(safeNextPath(null)).toBe("/creator");
     expect(safeNextPath("https://example.test")).toBe("/creator");
     expect(safeNextPath("//example.test")).toBe("/creator");
+    expect(safeNextPath("/creator/../studio")).toBe("/creator");
     expect(safeNextPath("/studio")).toBe("/creator");
+    expect(safeNextPath("/studio", production)).toBe("/creator");
+    expect(safeNextPath("/studio", development)).toBe("/studio");
     expect(safeNextPath("/creator/sources")).toBe("/creator/sources");
+    expect(safeNextPath("/creator/preview/22222222-2222-4222-8222-222222222222")).toBe(
+      "/creator/preview/22222222-2222-4222-8222-222222222222",
+    );
   });
 
   it("checks email and password shape before calling Supabase", () => {

@@ -1,3 +1,4 @@
+import { connection } from "next/server";
 import { redirect } from "next/navigation";
 import Link from "next/link";
 import { openIndividualWorkspace } from "@/auth/home";
@@ -10,6 +11,7 @@ import { TopicExplorer } from "./topic-explorer";
 import { SourceUpload } from "./source-upload";
 
 export async function CreatorSession() {
+  await connection();
   const session = await readVerifiedSession();
   if (!session) redirect("/login?next=/creator");
   let workspaceId: string;
@@ -40,7 +42,7 @@ export async function CreatorSession() {
         <li>Preview</li>
         <li>Share</li>
       </ol>
-      <p className={page.lead}>Your personal workspace is ready. The studio preview still uses the sample path.</p>
+      <p className={page.lead}>Your personal workspace is ready.</p>
       <p className={styles.note}>Topic recommendation runs only on a source already extracted in this workspace. It looks at headings and short excerpts, which is not a safety review, and it does not generate a game.</p>
       <SourceUpload sources={sources} />
       {sources.some((source) => source.extractionStatus === "complete" || source.extractionStatus === "partial") ? (
@@ -62,11 +64,6 @@ export async function CreatorSession() {
           </ul>
         )}
       </section>
-      <p className={page.links}>
-        <Link className={page.enter} href="/studio">
-          Continue in Creator Studio
-        </Link>
-      </p>
       <form action="/auth/logout" method="post">
         <button className={styles.secondary} type="submit">
           Log out

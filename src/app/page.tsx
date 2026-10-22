@@ -1,4 +1,7 @@
-import Link from "next/link";
+import { Suspense } from "react";
+import { connection } from "next/server";
+import { readVerifiedSession } from "@/auth/session";
+import { HomeNavigation } from "./home-navigation";
 import styles from "./page.module.css";
 
 export default function Home() {
@@ -10,14 +13,20 @@ export default function Home() {
         Start with a source and an audience. Generate a preview, then share
         only after rights and approval are clear.
       </p>
-      <div className={styles.links}>
-        <Link className={styles.enter} href="/studio">
-          Open Creator Studio
-        </Link>
-        <Link href="/login" className={styles.signIn}>
-          Sign in
-        </Link>
-      </div>
+      <Suspense fallback={<p>Checking your session…</p>}>
+        <HomeSession />
+      </Suspense>
     </main>
   );
+}
+
+async function HomeSession() {
+  await connection();
+  let signedIn = false;
+  try {
+    signedIn = (await readVerifiedSession()) !== null;
+  } catch {
+    signedIn = false;
+  }
+  return <HomeNavigation signedIn={signedIn} />;
 }
