@@ -1,9 +1,9 @@
 "use client";
 
-import { useRef, useState, type FormEvent } from "react";
+import { useRef, useState, type FormEvent, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import type { CreatorUploadView, ExtractedSourceSummary } from "@/topic/public";
-import styles from "../auth.module.css";
+import styles from "./creator.module.css";
 
 function messageFor(code: string) {
   if (code === "oversized") return "The file is larger than the upload limit.";
@@ -24,12 +24,21 @@ function statusLabel(source: ExtractedSourceSummary) {
   return "Processing";
 }
 
+function rightsLabel(status: ExtractedSourceSummary["rightsStatus"]) {
+  if (status === "blocked") return "Rights are blocked";
+  if (status === "cleared") return "Rights cleared";
+  return "Rights not verified";
+}
+
 export function SourceUpload({ sources }: { sources: ExtractedSourceSummary[] }) {
   const router = useRouter();
   const key = useRef(crypto.randomUUID());
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
   const [result, setResult] = useState<CreatorUploadView | null>(null);
+  const waiting = sources.some((source) => source.extractionStatus === "pending" && source.rightsStatus !== "blocked");
+  const extracted = sources.some((source) => source.extractionStatus === "complete" || source.extractionStatus === "partial");
+  const formOpen = sources.length === 0 || (!waiting && !extracted);
 
   async function upload(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -77,50 +86,75 @@ export function SourceUpload({ sources }: { sources: ExtractedSourceSummary[] })
     }
   }
 
-  return (
-    <section aria-labelledby="upload-heading">
-      <h2 id="upload-heading" className={styles.subhead}>Upload a source</h2>
-      <p className={styles.note}>
-        Upload a text, Markdown, DOCX, or text-layer PDF into this workspace. The file is stored privately.
+  const fields = (
+    <>
+      <label className={styles.field} htmlFor="source-file">
+        Source file
+        <input id="source-file" name="source" type="file" accept=".txt,.md,.docx,.pdf,text/plain,text/markdown,application/pdf" aria-describedby="upload-limits" required />
+      </label>
+      <label className={styles.field} htmlFor="source-rights">
+        Source rights
+        <select id="source-rights" name="rightsDeclaration" defaultValue="" required>
+          <option value="" disabled>Choose a rights declaration</option>
+          <option value="permission-asserted">I have permission to use this source</option>
+          <option value="blocked">Rights are blocked</option>
+        </select>
+      </label>
+      <button className={styles.button} type="submit" disabled={pending}>{pending ? "Working on your source…" : "Upload source"}</button>
+      <p className={styles.help} id="upload-limits">
+        Use a text, Markdown, DOCX, or text-layer PDF. The file is stored privately.
         Extraction does not clear source rights, and it does not generate a game.
       </p>
-      <form className={styles.form} onSubmit={(event) => void upload(event)}>
-        <label htmlFor="source-file">
-          Source file
-          <input id="source-file" name="source" type="file" accept=".txt,.md,.docx,.pdf,text/plain,text/markdown,application/pdf" required />
-        </label>
-        <label htmlFor="source-rights">
-          Source rights
-          <select id="source-rights" name="rightsDeclaration" defaultValue="" required>
-            <option value="" disabled>Choose a rights declaration</option>
-            <option value="permission-asserted">I have permission to use this source</option>
-            <option value="blocked">Rights are blocked</option>
-          </select>
-        </label>
-        <button type="submit" disabled={pending}>Upload source</button>
-      </form>
+    </>
+  );
+
+  let form: ReactNode;
+  if (formOpen) {
+    form = <form className={`${styles.form} ${styles.primary}`} onSubmit={(event) => void upload(event)}>{fields}</form>;
+  } else {
+    form = (
+      <details className={styles.disclosure}>
+        <summary>Add another source</summary>
+        <form className={styles.form} onSubmit={(event) => void upload(event)}>{fields}</form>
+      </details>
+    );
+  }
+
+  return (
+    <section className={styles.stage} aria-labelledby="upload-heading">
+      <div className={styles.stageHeader}>
+        <h2 id="upload-heading">{sources.length === 0 ? "Upload a source" : "Your sources"}</h2>
+        {sources.length === 0 ? <p className={styles.quiet}>This is the first step. Add a file you have permission to use.</p> : null}
+        {waiting ? <p className={styles.quiet}>Next: finish processing a source.</p> : null}
+        {sources.length > 0 && formOpen ? <p className={styles.quiet}>Next: add a source you can use.</p> : null}
+      </div>
+      {sources.length === 0 ? <p className={styles.empty}>No source yet.</p> : (
+        <ul className={styles.cards}>
+          {sources.map((source) => (
+            <li className={styles.card} key={source.documentVersionId}>
+              <p className={styles.status}>{statusLabel(source)}</p>
+              <h3>{source.filename}</h3>
+              <p className={styles.meta}>{rightsLabel(source.rightsStatus)} · {source.byteCount} bytes</p>
+              {source.extractionStatus === "pending" && source.rightsStatus !== "blocked" ? (
+                <div className={styles.actions}>
+                  <button className={styles.secondary} type="button" disabled={pending} onClick={() => void continueProcessing(source.documentVersionId)}>
+                    Continue processing
+                  </button>
+                </div>
+              ) : null}
+            </li>
+          ))}
+        </ul>
+      )}
       {error ? <p className={styles.alert} role="alert">{error}</p> : null}
+      {pending ? <p className={styles.note} role="status">Working on your source.</p> : null}
       {result ? (
         <p className={styles.note} role="status">
           {result.filename} is {result.extractionStatus}. Rights remain {result.rightsStatus}. No experience was generated.
           {result.cost ? ` Processing took ${result.cost.durationMs} ms and stored ${result.cost.storedBytes} bytes.` : ""}
         </p>
       ) : null}
-      {sources.length > 0 ? (
-        <ul className={styles.topicList}>
-          {sources.map((source) => (
-            <li key={source.documentVersionId}>
-              <p className={styles.topicTitle}>{source.filename}</p>
-              <p>{statusLabel(source)} {source.byteCount} bytes. Rights: {source.rightsStatus}.</p>
-              {source.extractionStatus === "pending" && source.rightsStatus !== "blocked" ? (
-                <button className={styles.quiet} type="button" disabled={pending} onClick={() => void continueProcessing(source.documentVersionId)}>
-                  Continue processing
-                </button>
-              ) : null}
-            </li>
-          ))}
-        </ul>
-      ) : null}
+      {form}
     </section>
   );
 }

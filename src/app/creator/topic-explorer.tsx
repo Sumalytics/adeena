@@ -3,7 +3,7 @@
 import { useRef, useState } from "react";
 import { AUDIENCE_OPTIONS } from "@/app/studio/studio-form";
 import type { ExtractedSourceSummary, TopicRecommendationView } from "@/topic/public";
-import styles from "../auth.module.css";
+import styles from "./creator.module.css";
 
 const AGE_BANDS = [
   ["5-7", "Ages 5–7"],
@@ -26,6 +26,12 @@ const GENERATION_COPY: Record<string, string> = {
   "cross-workspace": "That source belongs to another workspace.",
   "generation-denied": "This source cannot be used to generate an experience.",
 };
+
+function eligibilityCopy(eligibility: "eligible" | "needs-review" | "insufficient-support") {
+  if (eligibility === "eligible") return "Usable as a starting topic.";
+  if (eligibility === "insufficient-support") return "Not enough source support.";
+  return "Needs a person to decide.";
+}
 
 export function TopicExplorer({ sources }: { sources: ExtractedSourceSummary[] }) {
   const [documentVersionId, setDocumentVersionId] = useState(sources[0]?.documentVersionId ?? "");
@@ -180,21 +186,24 @@ export function TopicExplorer({ sources }: { sources: ExtractedSourceSummary[] }
     || selected?.reasons.includes("sensitive-domain")
     || false;
   const canGenerate = Boolean(selectedId) && sourceRights !== "blocked" && !needsReview && (selected ? selected.eligibility === "eligible" : recommendation?.status === "recommended");
+  const statusText = message || (pending ? "Working…" : "");
 
   return (
-    <section aria-labelledby="topic-heading">
-      <h2 id="topic-heading" className={styles.subhead}>Starting topic</h2>
-      <p className={styles.note}>
-        A recommendation names one source topic from headings and short excerpts. That is not a safety review or an educational approval, and it does not generate a game.
-      </p>
+    <section className={styles.stage} aria-labelledby="topic-heading">
+      <div className={styles.stageHeader}>
+        <h2 id="topic-heading">Choose a topic</h2>
+        <p className={styles.quiet}>
+          Next, name who this is for. A recommendation uses headings and short excerpts. That is not a safety review or an educational approval, and it does not generate a game.
+        </p>
+      </div>
       <form
-        className={styles.form}
+        className={`${styles.form} ${styles.primary}`}
         onSubmit={(event) => {
           event.preventDefault();
           void recommend();
         }}
       >
-        <label htmlFor="topic-source">
+        <label className={styles.field} htmlFor="topic-source">
           Extracted source
           <select
             id="topic-source"
@@ -211,7 +220,7 @@ export function TopicExplorer({ sources }: { sources: ExtractedSourceSummary[] }
             ))}
           </select>
         </label>
-        <label htmlFor="topic-audience">
+        <label className={styles.field} htmlFor="topic-audience">
           Audience
           <select id="topic-audience" value={audienceLabel} onChange={(event) => setAudienceLabel(event.target.value)}>
             <option value="">Select an audience</option>
@@ -220,7 +229,7 @@ export function TopicExplorer({ sources }: { sources: ExtractedSourceSummary[] }
             ))}
           </select>
         </label>
-        <label htmlFor="topic-age">
+        <label className={styles.field} htmlFor="topic-age">
           Age band
           <select id="topic-age" value={ageBand} onChange={(event) => setAgeBand(event.target.value)}>
             <option value="">Select an age band</option>
@@ -229,10 +238,10 @@ export function TopicExplorer({ sources }: { sources: ExtractedSourceSummary[] }
             ))}
           </select>
         </label>
-        <button type="submit" disabled={!ready || pending}>Recommend a starting topic</button>
+        <button className={styles.button} type="submit" disabled={!ready || pending}>Recommend a starting topic</button>
       </form>
       {error ? <p className={styles.alert} role="alert">{error}</p> : null}
-      <p className={styles.pending} role="status" aria-live="polite">{message}</p>
+      {statusText ? <p className={styles.note} role="status" aria-live="polite">{statusText}</p> : null}
       {recommendation ? (
         <p className={styles.note}>
           {recommendation.understood === "full" ? "The source text was read." : "The source was only partly understood."}
@@ -243,22 +252,25 @@ export function TopicExplorer({ sources }: { sources: ExtractedSourceSummary[] }
         </p>
       ) : null}
       {view && view.page.total > 0 ? (
-        <div className={styles.topicActions}>
-          <button className={styles.quiet} type="button" aria-expanded={open} onClick={() => setOpen((value) => !value)}>
+        <div className={styles.actions}>
+          <button className={styles.secondary} type="button" aria-expanded={open} onClick={() => setOpen((value) => !value)}>
             Explore other topics
           </button>
         </div>
       ) : null}
       {open && view ? (
         <>
-          <ul className={styles.topicList}>
+          <ul className={styles.cards}>
             {view.candidates.map((candidate) => (
-              <li key={candidate.id}>
-                <h3 className={styles.topicTitle}>{candidate.title}</h3>
-                <p>{candidate.eligibility === "eligible" ? "Usable as a starting topic." : "Needs a person to decide."}</p>
+              <li className={styles.card} key={candidate.id}>
+                <h3>{candidate.title}</h3>
+                <p className={styles.meta}>{eligibilityCopy(candidate.eligibility)}</p>
                 {candidate.eligibility === "eligible" ? (
-                  <button className={styles.quiet} type="button" onClick={() => setPickedId(candidate.id)}>Use this topic</button>
+                  <div className={styles.actions}>
+                    <button className={styles.secondary} type="button" onClick={() => setPickedId(candidate.id)}>Use this topic</button>
+                  </div>
                 ) : null}
+                {pickedId === candidate.id ? <p className={styles.status}>Selected</p> : null}
                 {candidate.detectionMethod !== "bounded-text" ? (
                   editing === candidate.id ? (
                     <form
@@ -268,42 +280,52 @@ export function TopicExplorer({ sources }: { sources: ExtractedSourceSummary[] }
                         void correct(candidate.primaryNodeId, new FormData(event.currentTarget));
                       }}
                     >
-                      <label htmlFor={`correct-${candidate.id}`}>
+                      <label className={styles.field} htmlFor={`correct-${candidate.id}`}>
                         Corrected heading
                         <input id={`correct-${candidate.id}`} name="title" defaultValue={candidate.title} maxLength={200} required />
                       </label>
-                      <button type="submit" disabled={pending}>Save heading</button>
+                      <button className={styles.button} type="submit" disabled={pending}>Save heading</button>
                     </form>
                   ) : (
-                    <button className={styles.quiet} type="button" onClick={() => setEditing(candidate.id)}>
-                      Correct heading
-                    </button>
+                    <div className={styles.actions}>
+                      <button className={styles.secondary} type="button" onClick={() => setEditing(candidate.id)}>
+                        Correct heading
+                      </button>
+                    </div>
                   )
                 ) : null}
               </li>
             ))}
           </ul>
           {view.candidates.length < view.page.total ? (
-            <button className={styles.quiet} type="button" onClick={() => void showMore()}>Show more topics</button>
+            <div className={styles.actions}>
+              <button className={styles.secondary} type="button" onClick={() => void showMore()}>Show more topics</button>
+            </div>
           ) : null}
         </>
       ) : null}
-      <section aria-labelledby="experience-heading">
-        <h2 id="experience-heading" className={styles.subhead}>Playable experience</h2>
-        <p className={styles.note}>
-          Creating a playable experience uses the configured generator. The draft stays private and unpublished. AI generation is not part of topic recommendation.
+      <section className={styles.panel} aria-labelledby="experience-heading">
+        <h3 id="experience-heading">Private draft</h3>
+        <p className={styles.help}>
+          A draft stays private and unpublished. AI generation is not part of topic recommendation, and public sharing is not available.
         </p>
-        {!view ? <p className={styles.note}>Recommend a topic before creating an experience.</p> : null}
-        {sourceRights === "blocked" ? <p className={styles.note}>Source rights are blocked, so no experience can be created.</p> : null}
-        {needsReview ? <p className={styles.note}>This source needs review before an experience can be created.</p> : null}
-        {view && !canGenerate && sourceRights !== "blocked" && !needsReview ? <p className={styles.note}>Choose an eligible topic before creating an experience.</p> : null}
+        {!view ? <p className={styles.help}>Recommend a topic before creating an experience.</p> : null}
+        {sourceRights === "blocked" ? <p className={styles.help}>Source rights are blocked, so no experience can be created.</p> : null}
+        {needsReview ? <p className={styles.help}>This source needs review before an experience can be created.</p> : null}
+        {view && !canGenerate && sourceRights !== "blocked" && !needsReview ? <p className={styles.help}>Choose an eligible topic before creating an experience.</p> : null}
         {canGenerate && selectedId ? (
-          <button type="button" disabled={pending} onClick={() => void generate(selectedId)}>
-            {pending ? "Creating the private draft…" : "Create playable experience"}
-          </button>
+          <div className={styles.actions}>
+            <button className={styles.button} type="button" disabled={pending} onClick={() => void generate(selectedId)}>
+              {pending ? "Creating the private draft…" : "Create playable experience"}
+            </button>
+          </div>
         ) : null}
-        {draftPath ? <p className={styles.note}><a href={draftPath}>Open private preview</a></p> : null}
-        {draftNote ? <p className={styles.note}>{draftNote}</p> : null}
+        {draftPath ? (
+          <div className={styles.actions}>
+            <a className={styles.draftLink} href={draftPath}>Open private preview</a>
+          </div>
+        ) : null}
+        {draftNote ? <p className={styles.help}>{draftNote}</p> : null}
       </section>
     </section>
   );

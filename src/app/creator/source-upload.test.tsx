@@ -18,4 +18,24 @@ describe("creator upload controls", () => {
     expect(html).not.toContain("Generate preview");
     expect(html).not.toContain("private://");
   });
+
+  it("shows the real processing status and the next action on a source card", () => {
+    const html = renderToStaticMarkup(
+      <SourceUpload
+        sources={[{
+          documentVersionId: "22222222-2222-4222-8222-222222222222",
+          filename: "rivers.md",
+          extractionStatus: "pending",
+          rightsStatus: "unverified",
+          byteCount: 128,
+        }]}
+      />,
+    );
+    expect(html).toContain("rivers.md");
+    expect(html).toContain("Processing");
+    expect(html).toContain("Rights not verified");
+    expect(html).toContain("Next: finish processing a source.");
+    expect(html).toContain("Continue processing");
+    expect(html).not.toContain("Generate preview");
+  });
 });
