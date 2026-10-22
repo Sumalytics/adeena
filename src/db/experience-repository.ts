@@ -291,6 +291,11 @@ async function loadSource(workspace: AuthorizedWorkspace, input: {
   const version = versions[0];
   if (!version) throw new SourceError("cross-workspace");
   if (version.rights_status === "blocked") throw new SourceError("rights-blocked");
+  // Audience-scoping defect, left unchanged for the generation task: this reads the
+  // newest active recommendation on the document and does not match the requested
+  // audience or age band. Two workflows on one source can therefore be judged by
+  // each other's run. The later task must load the workflow's own run and keep
+  // the rights, review, eligibility, and extraction checks below.
   const runs = await workspace.tx<{ status: string; reasons: unknown }[]>`
     select status, reasons from recommendation_runs
     where workspace_id = ${workspace.workspaceId}::uuid and document_version_id = ${input.documentVersionId}::uuid and active = true

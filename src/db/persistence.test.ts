@@ -34,6 +34,14 @@ import { sessionFromAuthUser } from "@/auth/subject";
 import { parseManifest } from "@adeena/experience-schema";
 import { correctTopicHeading, listExtractedSources, recommendFirstTopic } from "./topic-repository";
 import { createPlayableExperience, listPlayableDrafts, readPlayableExperience, resumePlayableExperience } from "./experience-repository";
+import {
+  createCreatorWorkflow,
+  listCreatorWorkflows,
+  readCreatorWorkflow,
+  selectWorkflowAudience,
+  selectWorkflowSource,
+  selectWorkflowTopic,
+} from "./workflow-repository";
 import { acceptExperienceEdit, proposeExperienceEdit, rejectExperienceEdit, resumeExperienceEdit } from "./edit-repository";
 import { simulateExperience } from "@/experience/simulate";
 
@@ -87,7 +95,7 @@ describe("postgresql source persistence", () => {
   afterAll(async () => {
     try {
       if (ready && admin) {
-        await admin`TRUNCATE experience_edit_events, experience_edit_costs, experience_current_drafts, experience_edit_jobs, experience_generation_costs, experience_validation_results, experience_plans, experience_versions, experience_generation_jobs, recommendation_runs, topic_candidates, topic_overrides, source_processing_costs, knowledge_nodes, source_spans, knowledge_collections, extraction_results, extraction_jobs, source_document_versions, source_documents, workspace_memberships, workspaces`;
+        await admin`TRUNCATE creator_workflows, experience_edit_events, experience_edit_costs, experience_current_drafts, experience_edit_jobs, experience_generation_costs, experience_validation_results, experience_plans, experience_versions, experience_generation_jobs, recommendation_runs, topic_candidates, topic_overrides, source_processing_costs, knowledge_nodes, source_spans, knowledge_collections, extraction_results, extraction_jobs, source_document_versions, source_documents, workspace_memberships, workspaces`;
       }
     } finally {
       if (admin) await admin.end({ timeout: 1 });
@@ -154,6 +162,24 @@ describe("postgresql source persistence", () => {
       { name: "experience_validation_results", forced: true },
       { name: "experience_versions", forced: true },
     ]);
+    const workflows = await admin`
+      select c.relforcerowsecurity as forced
+      from pg_class c
+      join pg_namespace n on n.oid = c.relnamespace
+      where n.nspname = 'public' and c.relname = 'creator_workflows'
+    `;
+    expect(workflows[0]?.forced).toBe(true);
+    const workflowIndexes = await admin<{ indexdef: string }[]>`
+      select indexdef from pg_indexes
+      where schemaname = 'public' and tablename = 'creator_workflows' and indexdef ilike '%unique%'
+    `;
+    expect(workflowIndexes.some((index) => /document_version_id|topic_candidate|audience_label/.test(index.indexdef))).toBe(false);
+    const grants = await admin<{ privilege_type: string }[]>`
+      select privilege_type from information_schema.role_table_grants
+      where table_name = 'creator_workflows' and grantee = 'adeena_app'
+      order by privilege_type
+    `;
+    expect(grants.map((grant) => grant.privilege_type)).toEqual(["INSERT", "SELECT", "UPDATE"]);
     await expect(sql`select id from adeena_schema_migrations`).rejects.toThrow();
   });
 
@@ -1403,5 +1429,254 @@ describe("postgresql source persistence", () => {
       select count(*)::int as total from experience_versions where document_version_id = ${doseVersion}::uuid
     `;
     expect(doseVersions[0]?.total).toBe(0);
+  });
+
+  describe("creator workflows", () => {
+    async function extracted(room: Awaited<ReturnType<typeof tenant>>, filename: string, bytes: Buffer) {
+      const enqueued = await enqueueDurableSource({
+        sql,
+        identity: room.identity,
+        workspaceId: room.workspaceId,
+        filename,
+        bytes,
+        idempotencyKey: randomUUID(),
+        store: room.store,
+      });
+      const versionId = enqueued.version?.id ?? enqueued.job.documentVersionId;
+      await runExtractionOnce({
+        sql,
+        identity: room.identity,
+        workspaceId: room.workspaceId,
+        store: room.store,
+        leaseOwner: filename.replace(/[^a-z0-9-]/g, ""),
+      });
+      return versionId;
+    }
+
+    it("keeps independent workflows and restores their selections", async () => {
+      const room = await tenant("Workflow room");
+      const other = await tenant("Other workflow room");
+      const key = randomUUID();
+      const first = await createCreatorWorkflow({ sql, identity: room.identity, workspaceId: room.workspaceId, idempotencyKey: key });
+      const replay = await createCreatorWorkflow({ sql, identity: room.identity, workspaceId: room.workspaceId, idempotencyKey: key });
+      const second = await createCreatorWorkflow({ sql, identity: room.identity, workspaceId: room.workspaceId, idempotencyKey: randomUUID() });
+      expect(replay).toMatchObject({ id: first.id, version: 1, documentVersionId: null });
+      expect(second.id).not.toBe(first.id);
+      const stored = await admin<{ total: number }[]>`
+        select count(*)::int as total from creator_workflows where idempotency_key = ${key}::uuid
+      `;
+      expect(stored[0]?.total).toBe(1);
+
+      const rivers = await extracted(room, "rivers.md", Buffer.from("# Rivers\n\nWater moves downhill."));
+      const coasts = await extracted(room, "coasts.md", Buffer.from("# Coasts\n\nWaves shape the shore."));
+      const foreign = await extracted(other, "foreign.md", Buffer.from("# Foreign\n\nThis belongs elsewhere."));
+      const riversRecommendation = await recommendFirstTopic({
+        sql,
+        identity: room.identity,
+        workspaceId: room.workspaceId,
+        documentVersionId: rivers,
+        audienceLabel: "Primary learners",
+        ageBand: "8-10",
+        idempotencyKey: randomUUID(),
+      });
+      const coastsRecommendation = await recommendFirstTopic({
+        sql,
+        identity: room.identity,
+        workspaceId: room.workspaceId,
+        documentVersionId: coasts,
+        audienceLabel: "Primary learners",
+        ageBand: "8-10",
+        idempotencyKey: randomUUID(),
+      });
+      const riversTopic = riversRecommendation.candidates[0]?.id;
+      const coastsTopic = coastsRecommendation.candidates[0]?.id;
+      expect(riversTopic).toBeTruthy();
+      expect(coastsTopic).toBeTruthy();
+
+      const sourced = await selectWorkflowSource({
+        sql,
+        identity: room.identity,
+        workspaceId: room.workspaceId,
+        workflowId: first.id,
+        expectedVersion: first.version,
+        documentVersionId: rivers,
+      });
+      const addressed = await selectWorkflowAudience({
+        sql,
+        identity: room.identity,
+        workspaceId: room.workspaceId,
+        workflowId: first.id,
+        expectedVersion: sourced.version,
+        audienceLabel: "Primary learners",
+        ageBand: "8-10",
+      });
+      const picked = await selectWorkflowTopic({
+        sql,
+        identity: room.identity,
+        workspaceId: room.workspaceId,
+        workflowId: first.id,
+        expectedVersion: addressed.version,
+        topicCandidateId: riversTopic ?? "",
+      });
+      const restored = await readCreatorWorkflow({
+        sql,
+        identity: room.identity,
+        workspaceId: room.workspaceId,
+        workflowId: first.id,
+      });
+      expect(restored).toMatchObject({
+        id: first.id,
+        version: picked.version,
+        documentVersionId: rivers,
+        audienceLabel: "Primary learners",
+        ageBand: "8-10",
+        selectedTopicCandidateId: riversTopic,
+      });
+      const moved = await selectWorkflowSource({
+        sql,
+        identity: room.identity,
+        workspaceId: room.workspaceId,
+        workflowId: first.id,
+        expectedVersion: picked.version,
+        documentVersionId: coasts,
+      });
+      expect(moved.selectedTopicCandidateId).toBeNull();
+      expect(moved.documentVersionId).toBe(coasts);
+      const untouched = await readCreatorWorkflow({
+        sql,
+        identity: room.identity,
+        workspaceId: room.workspaceId,
+        workflowId: second.id,
+      });
+      expect(untouched).toMatchObject({ documentVersionId: null, audienceLabel: null, selectedTopicCandidateId: null, version: 1 });
+
+      await expect(selectWorkflowSource({
+        sql,
+        identity: room.identity,
+        workspaceId: room.workspaceId,
+        workflowId: first.id,
+        expectedVersion: moved.version,
+        documentVersionId: foreign,
+      })).rejects.toMatchObject({ code: "cross-workspace" });
+      await expect(selectWorkflowTopic({
+        sql,
+        identity: room.identity,
+        workspaceId: room.workspaceId,
+        workflowId: first.id,
+        expectedVersion: moved.version,
+        topicCandidateId: riversTopic ?? "",
+      })).rejects.toMatchObject({ code: "invalid-workflow" });
+      await expect(readCreatorWorkflow({
+        sql,
+        identity: other.identity,
+        workspaceId: other.workspaceId,
+        workflowId: first.id,
+      })).rejects.toMatchObject({ code: "cross-workspace" });
+      await expect(selectWorkflowAudience({
+        sql,
+        identity: other.identity,
+        workspaceId: room.workspaceId,
+        workflowId: first.id,
+        expectedVersion: moved.version,
+        audienceLabel: "Primary learners",
+        ageBand: "8-10",
+      })).rejects.toMatchObject({ code: "unauthenticated" });
+      const hidden = await sql`select id from creator_workflows where id = ${first.id}::uuid`;
+      expect(hidden).toHaveLength(0);
+      await expect(sql`
+        insert into creator_workflows (id, workspace_id, created_by, idempotency_key)
+        values (${randomUUID()}::uuid, ${room.workspaceId}::uuid, ${room.userId}::uuid, ${randomUUID()}::uuid)
+      `).rejects.toThrow();
+
+      expect(riversRecommendation.recommendation?.id).toBeTruthy();
+      await expect(admin`
+        update creator_workflows
+        set recommendation_run_id = ${riversRecommendation.recommendation?.id ?? randomUUID()}::uuid
+        where id = ${first.id}::uuid
+      `).rejects.toThrow(/recommendation does not match/);
+      const sourcedSecond = await selectWorkflowSource({
+        sql,
+        identity: room.identity,
+        workspaceId: room.workspaceId,
+        workflowId: second.id,
+        expectedVersion: second.version,
+        documentVersionId: rivers,
+      });
+      const raced = await Promise.allSettled([
+        selectWorkflowAudience({
+          sql,
+          identity: room.identity,
+          workspaceId: room.workspaceId,
+          workflowId: second.id,
+          expectedVersion: sourcedSecond.version,
+          audienceLabel: "Primary learners",
+          ageBand: "8-10",
+        }),
+        selectWorkflowAudience({
+          sql,
+          identity: room.identity,
+          workspaceId: room.workspaceId,
+          workflowId: second.id,
+          expectedVersion: sourcedSecond.version,
+          audienceLabel: "General audience",
+          ageBand: "adult",
+        }),
+      ]);
+      const saved = raced.find((result) => result.status === "fulfilled");
+      const rejected = raced.find((result) => result.status === "rejected");
+      expect(saved?.status).toBe("fulfilled");
+      expect(rejected?.status).toBe("rejected");
+      if (rejected?.status === "rejected") expect(rejected.reason).toMatchObject({ code: "stale-workflow" });
+
+      const reserved = await selectWorkflowTopic({
+        sql,
+        identity: room.identity,
+        workspaceId: room.workspaceId,
+        workflowId: first.id,
+        expectedVersion: moved.version,
+        topicCandidateId: coastsTopic ?? "",
+      });
+      const audience = await selectWorkflowAudience({
+        sql,
+        identity: room.identity,
+        workspaceId: room.workspaceId,
+        workflowId: first.id,
+        expectedVersion: reserved.version,
+        audienceLabel: "Primary learners",
+        ageBand: "8-10",
+      });
+      const topic = await selectWorkflowTopic({
+        sql,
+        identity: room.identity,
+        workspaceId: room.workspaceId,
+        workflowId: first.id,
+        expectedVersion: audience.version,
+        topicCandidateId: coastsTopic ?? "",
+      });
+      await admin`
+        update creator_workflows
+        set generation_idempotency_key = ${randomUUID()}::uuid
+        where id = ${first.id}::uuid
+      `;
+      await expect(selectWorkflowSource({
+        sql,
+        identity: room.identity,
+        workspaceId: room.workspaceId,
+        workflowId: first.id,
+        expectedVersion: topic.version,
+        documentVersionId: rivers,
+      })).rejects.toMatchObject({ code: "invalid-workflow" });
+      const frozen = await readCreatorWorkflow({
+        sql,
+        identity: room.identity,
+        workspaceId: room.workspaceId,
+        workflowId: first.id,
+      });
+      expect(frozen.version).toBe(topic.version);
+      expect(frozen.documentVersionId).toBe(coasts);
+      expect(frozen.generationIdempotencyKey).toBeTruthy();
+      const listed = await listCreatorWorkflows({ sql, identity: room.identity, workspaceId: room.workspaceId });
+      expect(listed.map((workflow) => workflow.id).sort()).toEqual([first.id, second.id].sort());
+    });
   });
 });

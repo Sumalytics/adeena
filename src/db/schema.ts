@@ -169,6 +169,25 @@ export const recommendationRuns = pgTable("recommendation_runs", {
   createdAt: timestamps.createdAt,
 });
 
+export const creatorWorkflows = pgTable("creator_workflows", {
+  id: uuid("id").primaryKey(),
+  workspaceId: uuid("workspace_id").notNull(),
+  createdBy: uuid("created_by").notNull(),
+  idempotencyKey: uuid("idempotency_key").notNull(),
+  documentVersionId: uuid("document_version_id"),
+  audienceLabel: text("audience_label"),
+  ageBand: text("age_band"),
+  recommendationRunId: uuid("recommendation_run_id"),
+  recommendationIdempotencyKey: uuid("recommendation_idempotency_key"),
+  selectedTopicCandidateId: uuid("selected_topic_candidate_id"),
+  generationIdempotencyKey: uuid("generation_idempotency_key"),
+  generationJobId: uuid("generation_job_id"),
+  experienceVersionId: uuid("experience_version_id"),
+  version: integer("version").notNull(),
+  createdAt: timestamps.createdAt,
+  updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
+});
+
 export const sourceProcessingCosts = pgTable("source_processing_costs", {
   id: uuid("id").primaryKey(),
   workspaceId: uuid("workspace_id").notNull(),

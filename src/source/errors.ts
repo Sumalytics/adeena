@@ -36,6 +36,8 @@ export const SOURCE_ERROR_CODES = [
   "unsupported-edit",
   "stale-version",
   "provider-unavailable",
+  "invalid-workflow",
+  "stale-workflow",
 ] as const;
 
 export type SourceErrorCode = (typeof SOURCE_ERROR_CODES)[number];
@@ -79,6 +81,8 @@ export const SOURCE_ERROR_TEXT: Record<SourceErrorCode, string> = {
   "unsupported-edit": "That change is outside the edits this draft can make.",
   "stale-version": "A newer revision is already the current draft.",
   "provider-unavailable": "The model did not answer. The current draft was left unchanged.",
+  "invalid-workflow": "That workflow update could not be accepted.",
+  "stale-workflow": "This workflow was updated somewhere else. Reload it and try again.",
 };
 
 export class SourceError extends Error {
