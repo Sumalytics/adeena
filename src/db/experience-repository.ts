@@ -14,7 +14,6 @@ import { withWorkspace, type AuthorizedWorkspace } from "./authz";
 import { databaseFailure } from "./client";
 import type { VerifiedIdentity } from "./identity";
 
-const BLOCKING = new Set(["review-required", "sensitive-domain", "unsafe-title", "rights-blocked"]);
 const STATUSES = new Set<GenerationStatus>(["queued", "planning", "compiling", "validating", "ready", "failed", "cancelled"]);
 
 type LoadedSource = Omit<GenerationSource, "experienceId" | "versionId">;
@@ -339,7 +338,6 @@ async function loadSource(workspace: AuthorizedWorkspace, input: {
   `;
   const run = runs[0];
   if (!run) throw new SourceError("generation-denied");
-  if (strings(run.reasons).some((reason) => BLOCKING.has(reason))) throw new SourceError("review-required");
   if (run.status === "insufficient-support") throw new SourceError("insufficient-source");
   const candidates = await workspace.tx<{
     title: string;
@@ -355,9 +353,10 @@ async function loadSource(workspace: AuthorizedWorkspace, input: {
   `;
   const candidate = candidates[0];
   if (!candidate) throw new SourceError("generation-denied");
-  if (strings(candidate.reasons).some((reason) => BLOCKING.has(reason)) || candidate.eligibility === "needs-review") {
-    throw new SourceError("review-required");
-  }
+  const candidateReasons = strings(candidate.reasons);
+  if (candidateReasons.includes("sensitive-domain")) throw new SourceError("sensitive-topic");
+  if (candidateReasons.includes("unsafe-title")) throw new SourceError("unsafe-topic");
+  if (candidate.eligibility === "needs-review") throw new SourceError("source-structure-required");
   if (candidate.eligibility === "insufficient-support") throw new SourceError("insufficient-source");
   if (candidate.eligibility !== "eligible") throw new SourceError("generation-denied");
   const latest = await workspace.tx<{ id: string }[]>`
@@ -375,7 +374,7 @@ async function loadSource(workspace: AuthorizedWorkspace, input: {
   const spans = spanRows.filter((span) => wanted.includes(span.id));
   if (wanted.length === 0 || spans.length !== wanted.length) throw new SourceError("generation-denied");
   if ([candidate.title, ...spans.map((span) => span.excerpt)].some((value) => limitedSensitivityMatch(value))) {
-    throw new SourceError("review-required");
+    throw new SourceError("sensitive-topic");
   }
   return {
     source: {

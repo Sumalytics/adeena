@@ -10,6 +10,8 @@ import { SourceUpload } from "./source-upload";
 import {
   generationFailureCopy,
   generationStatusCopy,
+  topicGenerationGate,
+  topicRestrictionCopy,
   topicSavePlan,
   workflowUpdateFailure,
   type CreatorWorkflowView,
@@ -77,6 +79,7 @@ export function WorkflowEditor({
               : "generate";
   const step = previewId ? "preview" : topicReady ? "generate" : "choose";
   const selectedCandidate = topicView?.candidates.find((candidate) => candidate.id === current.selectedTopicCandidateId);
+  const generationGate = topicReady ? topicGenerationGate(selectedCandidate) : null;
   const selectedTitle = selectedCandidate?.title
     ?? (topicView?.recommendation?.topicCandidateId === current.selectedTopicCandidateId ? topicView.recommendation.topicTitle : null);
   const syncKey = `${workflow.version}:${recommendation?.recommendation?.id ?? ""}:${generation?.jobId ?? ""}:${generation?.status ?? ""}`;
@@ -326,7 +329,7 @@ export function WorkflowEditor({
           >
             <fieldset className={styles.cards}>
               <legend className={styles.quiet}>Choose one eligible topic.</legend>
-              {topicView.candidates.filter((candidate) => candidate.eligibility === "eligible").map((candidate) => (
+              {topicView.candidates.map((candidate) => (
                 <label className={styles.card} key={candidate.id}>
                   <span className={styles.sourceChoice}>
                     <input
@@ -334,10 +337,12 @@ export function WorkflowEditor({
                       name="workflow-topic"
                       value={candidate.id}
                       checked={topicChoice === candidate.id}
+                      disabled={candidate.eligibility !== "eligible"}
                       onChange={() => setTopicChoice(candidate.id)}
                     />
                     {candidate.title}
                   </span>
+                  <span className={styles.quiet}>{topicRestrictionCopy(candidate)}</span>
                 </label>
               ))}
             </fieldset>
@@ -347,7 +352,7 @@ export function WorkflowEditor({
           </form>
         ) : null}
         {plan === "choose" && topicView && topicView.candidates.every((candidate) => candidate.eligibility !== "eligible") ? (
-          <p className={styles.help}>None of these topics can be saved yet. A person needs to review them first.</p>
+          <p className={styles.help}>None of these topics can generate a private draft. Choose a fuller ordinary topic, correct the source headings or upload a more focused source.</p>
         ) : null}
         {plan === "unavailable" && topicView?.recommendation ? <p className={styles.help}>{topicView.recommendation.reason}</p> : null}
       </section>
@@ -360,7 +365,8 @@ export function WorkflowEditor({
         {draft && draft.status !== "ready" ? <p className={styles.note} role="status">{generationStatusCopy(draft.status)}</p> : null}
         {draft?.status === "failed" ? <p className={styles.alert} role="alert">{generationFailureCopy(draft.failureCode)}</p> : null}
         {!topicReady ? <p className={styles.help}>Save a topic before generation. This page does not start a generation job until you ask.</p> : null}
-        {topicReady && !previewId && draft?.status !== "failed" ? (
+        {topicReady && generationGate && !generationGate.allowed ? <p className={styles.alert}>{generationGate.message}</p> : null}
+        {topicReady && generationGate?.allowed && !previewId && draft?.status !== "failed" ? (
           <div className={styles.actions}>
             <button
               className={!stale && (primary === "generate" || primary === "continue") ? styles.button : styles.secondary}

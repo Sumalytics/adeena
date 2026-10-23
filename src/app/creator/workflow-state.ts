@@ -1,4 +1,4 @@
-import type { TopicRecommendationView } from "@/topic/public";
+import type { TopicCandidateView, TopicRecommendationView } from "@/topic/public";
 
 export type CreatorWorkflowView = {
   id: string;
@@ -27,7 +27,10 @@ const GENERATION_COPY: Record<string, string> = {
   "provider-unavailable": "The model did not finish. No fixture was substituted. Start a new experience to explicitly authorize another attempt.",
   "generation-unavailable": "AI generation is not configured. No experience was created.",
   "budget-unavailable": "Generation spending is not authorized. No experience was created.",
-  "review-required": "This source needs review before an experience can be created.",
+  "review-required": "Generation is unavailable for this topic. Choose another eligible topic or upload a focused ordinary source.",
+  "sensitive-topic": "The selected topic contains high-risk material that this workflow cannot generate. Choose a different eligible topic or upload a source focused on ordinary learning content.",
+  "unsafe-topic": "The selected topic has an unsafe heading. Correct the source structure or choose another eligible topic.",
+  "source-structure-required": "The selected topic is incomplete or not clearly bounded. Correct the source headings, choose another eligible topic or upload a more focused source.",
   "rights-blocked": "Source rights are blocked, so no experience was created.",
   "insufficient-source": "This topic does not have enough source support for a playable experience.",
   "invalid-experience": "The generated experience did not pass validation.",
@@ -50,6 +53,29 @@ export type WorkflowGenerationState = {
 export function generationFailureCopy(code: string | null | undefined) {
   if (!code) return "That experience could not be created.";
   return GENERATION_COPY[code] ?? "That experience could not be created.";
+}
+
+export function topicGenerationGate(candidate: TopicCandidateView | undefined) {
+  if (!candidate) {
+    return { allowed: false, message: "Recommend the topic again, then choose an eligible topic before generation." };
+  }
+  if (candidate.reasons.includes("sensitive-domain")) {
+    return { allowed: false, message: GENERATION_COPY["sensitive-topic"] };
+  }
+  if (candidate.reasons.includes("unsafe-title")) {
+    return { allowed: false, message: GENERATION_COPY["unsafe-topic"] };
+  }
+  if (candidate.eligibility === "insufficient-support") {
+    return { allowed: false, message: "This topic does not have enough source support. Choose a fuller section or upload a more complete source." };
+  }
+  if (candidate.eligibility !== "eligible") {
+    return { allowed: false, message: GENERATION_COPY["source-structure-required"] };
+  }
+  return { allowed: true, message: null };
+}
+
+export function topicRestrictionCopy(candidate: TopicCandidateView) {
+  return topicGenerationGate(candidate).message ?? "Eligible for a private draft.";
 }
 
 export function generationStatusCopy(status: WorkflowGenerationState["status"]) {

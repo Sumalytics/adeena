@@ -170,7 +170,7 @@ function generateFailure(error: unknown) {
   if (error.code === "stale-workflow") return { status: 409 as const, body: { error: error.code } };
   if (error.code === "invalid-workflow" || error.code === "invalid-generation") return { status: 400 as const, body: { error: error.code } };
   if (error.code === "unauthenticated") return { status: 401 as const, body: { error: error.code } };
-  if (error.code === "insufficient-source" || error.code === "invalid-experience" || error.code === "stale-extraction") {
+  if (error.code === "insufficient-source" || error.code === "source-structure-required" || error.code === "invalid-experience" || error.code === "stale-extraction") {
     return { status: 422 as const, body: { error: error.code } };
   }
   if (error.code === "generation-unavailable" || error.code === "provider-unavailable") return { status: 503 as const, body: { error: error.code } };

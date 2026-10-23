@@ -3,7 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import type { TopicRecommendationView } from "@/topic/public";
 import { WorkflowEditor } from "./workflow-editor";
-import { topicSavePlan, workflowUpdateFailure, type CreatorWorkflowView } from "./workflow-state";
+import { topicGenerationGate, topicSavePlan, workflowUpdateFailure, type CreatorWorkflowView } from "./workflow-state";
 
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push() {}, refresh() {} }),
@@ -115,5 +115,39 @@ describe("creator workflow screen", () => {
     })).toBe("choose");
     expect(topicSavePlan(null)).toBe("unavailable");
     expect(workflowUpdateFailure(409)).toMatchObject({ stale: true });
+  });
+
+  it("allows a safe selected topic from a mixed document and explains unavailable topics", () => {
+    const mixed = {
+      ...recommendation,
+      recommendation: recommendation.recommendation
+        ? { ...recommendation.recommendation, status: "needs-creator-selection" as const, topicCandidateId: null, topicTitle: null }
+        : null,
+      candidates: [
+        ...recommendation.candidates,
+        {
+          ...recommendation.candidates[0],
+          id: "77777777-7777-4777-8777-777777777777",
+          title: "Safeguarding duties",
+          eligibility: "needs-review" as const,
+          reasons: ["sensitive-domain"],
+        },
+      ],
+    };
+    const html = renderToStaticMarkup(<WorkflowEditor workflow={workflow} sources={[]} recommendation={mixed} />);
+    expect(html).toContain("Create playable experience");
+    expect(html).toContain("high-risk material");
+    expect(html).toContain("Choose a different eligible topic");
+    expect(html).not.toContain("A person needs to review them first");
+    expect(topicGenerationGate(mixed.candidates[0]).allowed).toBe(true);
+    expect(topicGenerationGate(mixed.candidates[1])).toMatchObject({ allowed: false });
+  });
+
+  it("offers recovery for unsupported source material", () => {
+    const unsupported = { ...recommendation.candidates[0], eligibility: "insufficient-support" as const, reasons: ["short-span"] };
+    expect(topicGenerationGate(unsupported)).toEqual({
+      allowed: false,
+      message: "This topic does not have enough source support. Choose a fuller section or upload a more complete source.",
+    });
   });
 });

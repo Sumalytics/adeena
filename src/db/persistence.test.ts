@@ -1440,6 +1440,26 @@ describe("postgresql source persistence", () => {
       topicCandidateId: randomUUID(), audienceLabel: "Primary learners", ageBand: "8-10", idempotencyKey: randomUUID(),
       authorizeGeneration: true, provider: "deterministic-fixture",
     })).rejects.toMatchObject({ code: "rights-blocked" });
+    const mixed = await enqueueDurableSource({
+      sql, identity: room.identity, workspaceId: room.workspaceId, filename: "mixed.md",
+      bytes: Buffer.from(`# Water routes\n\n## Rain gardens\n\n${lesson}\n\n# Staff guidance\n\n## Safeguarding duties\n\n${lesson}`),
+      idempotencyKey: randomUUID(), store: room.store,
+    });
+    const mixedVersion = mixed.version?.id ?? mixed.job.documentVersionId;
+    await runExtractionOnce({ sql, identity: room.identity, workspaceId: room.workspaceId, store: room.store, leaseOwner: "experience-mixed" });
+    const mixedRecommendation = await recommendFirstTopic({
+      sql, identity: room.identity, workspaceId: room.workspaceId, documentVersionId: mixedVersion,
+      audienceLabel: "Primary learners", ageBand: "8-10", idempotencyKey: randomUUID(),
+    });
+    expect(mixedRecommendation.recommendation?.status).toBe("needs-creator-selection");
+    const safeMixedTopic = mixedRecommendation.candidates.find((candidate) => candidate.eligibility === "eligible");
+    expect(safeMixedTopic?.id).toBeTruthy();
+    const mixedDraft = await createPlayableExperience({
+      sql, identity: room.identity, workspaceId: room.workspaceId, documentVersionId: mixedVersion,
+      topicCandidateId: safeMixedTopic?.id ?? randomUUID(), audienceLabel: "Primary learners", ageBand: "8-10",
+      idempotencyKey: randomUUID(), authorizeGeneration: true, provider: "deterministic-fixture",
+    });
+    expect(mixedDraft.status).toBe("ready");
     const dose = await enqueueDurableSource({
       sql, identity: room.identity, workspaceId: room.workspaceId, filename: "dose.md",
       bytes: Buffer.from(`# Care\n\n## Notes\n\nThe dosage in this passage requires a person to review it before any game. ${lesson}`),
@@ -1456,7 +1476,7 @@ describe("postgresql source persistence", () => {
       sql, identity: room.identity, workspaceId: room.workspaceId, documentVersionId: doseVersion, topicCandidateId: doseTopic,
       audienceLabel: "Primary learners", ageBand: "8-10", idempotencyKey: randomUUID(), authorizeGeneration: true,
       provider: "deterministic-fixture",
-    })).rejects.toMatchObject({ code: "review-required" });
+    })).rejects.toMatchObject({ code: "sensitive-topic" });
     const doseVersions = await admin<{ total: number }[]>`
       select count(*)::int as total from experience_versions where document_version_id = ${doseVersion}::uuid
     `;
