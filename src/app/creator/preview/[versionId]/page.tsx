@@ -60,7 +60,7 @@ async function PreviewSession({ params }: { params: Promise<{ versionId: string 
     "Private draft preview. Publication and source clearance are shown in Share below.",
     "The picture is a simple frame, not a custom animation.",
     preview.provider === FIXTURE_PROVIDER ? "Compiled from the source by the local fixture. This is not a live model result." : "",
-    preview.provider === CONFIGURED_PROVIDER ? "A configured model proposed this revision. The server checked the draft. This does not certify it for children or a classroom." : "",
+    preview.provider === CONFIGURED_PROVIDER ? "A configured model proposed this experience. The server checked the draft. This does not certify it for children or a classroom." : "",
     
     
   ].filter(Boolean).join(" ");

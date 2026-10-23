@@ -106,7 +106,7 @@ export async function CreatorSession() {
                   Unpublished
                 </p>
                 <p className={styles.help}>
-                  The local fixture compiled this from the source. It is not a live model result.
+                  {draft.liveModel ? "A configured AI model planned this from your selected source. Review the content and all outcomes." : "The local fixture compiled this from the source. It is not a live model result."}
                   Open it to ask for a change. The original stays until you accept a proposal.
                 </p>
                 <div className={styles.actions}>

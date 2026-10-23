@@ -29,12 +29,12 @@ export type Compilation =
   | { ok: true; plan: ExperiencePlan; manifest: ExperienceManifest; simulation: SimulationReport }
   | {
       ok: false;
-      code: "insufficient-source" | "invalid-experience" | "review-required";
+      code: "insufficient-source" | "invalid-experience" | "review-required" | "budget-unavailable" | "generation-unavailable" | "provider-unavailable";
       diagnostics: { code: string; message: string }[];
       simulation: { ok: false };
     };
 
-export function compileExperiencePlan(source: GenerationSource): Compilation {
+export function compileExperiencePlan(source: GenerationSource, proposed?: unknown): Compilation {
   const blocked = [source.topicTitle, ...source.spans.map((span) => span.excerpt)].some((value) => limitedSensitivityMatch(value));
   if (blocked) {
     return {
@@ -44,7 +44,7 @@ export function compileExperiencePlan(source: GenerationSource): Compilation {
       simulation: { ok: false },
     };
   }
-  const plan = planFromSource(source);
+  const plan = proposed === undefined ? planFromSource(source) : proposed;
   if (!plan) {
     return {
       ok: false,
@@ -67,6 +67,11 @@ export function compileExperiencePlan(source: GenerationSource): Compilation {
     return { ok: false, code: "invalid-experience", diagnostics: grounding, simulation: { ok: false } };
   }
   const structure = structureDiagnostics(parsed.data);
+  if (parsed.data.audienceLabel !== source.audienceLabel || parsed.data.ageBand !== source.ageBand) structure.push({ code: "plan.audience", message: "Plan audience differs from the selected audience." });
+  for (const ref of parsed.data.sourceReferences) {
+    if (ref.documentVersionId !== source.documentVersionId || !source.spans.some(span => span.id === ref.spanId)) structure.push({ code: "grounding.reference", message: "A reference is outside the selected source." });
+  }
+  if (parsed.data.facts.some(fact => !parsed.data.sourceReferences.some(ref => ref.spanId === fact.spanId))) structure.push({ code: "grounding.reference", message: "A fact lacks its source reference." });
   if (structure.length > 0) {
     return { ok: false, code: "invalid-experience", diagnostics: structure, simulation: { ok: false } };
   }

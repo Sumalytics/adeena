@@ -26,39 +26,50 @@ export async function proxy(request: NextRequest) {
       getAll() {
         return request.cookies.getAll();
       },
-      setAll(cookiesToSet) {
+      setAll(cookiesToSet, headersToSet) {
         for (const { name, value } of cookiesToSet) request.cookies.set(name, value);
-        response = NextResponse.next({ request });
-        for (const { name, value, options } of cookiesToSet) response.cookies.set(name, value, options);
+        const refreshed = NextResponse.next({ request });
+        copyAuthState(response, refreshed);
+        for (const { name, value, options } of cookiesToSet) refreshed.cookies.set(name, value, options);
+        for (const [name, value] of Object.entries(headersToSet)) refreshed.headers.set(name, value);
+        response = refreshed;
       },
     },
   });
 
-  let user: { id: string } | null = null;
+  let subject: string | null = null;
   try {
-    const verified = await supabase.auth.getUser();
-    user = verified.data.user;
+    const verified = await supabase.auth.getClaims();
+    subject = verified.error ? null : typeof verified.data?.claims?.sub === "string" ? verified.data.claims.sub : null;
   } catch {
-    user = null;
+    subject = null;
   }
 
   const creatorApi = path === "/api/creator" || path.startsWith("/api/creator/");
   const creatorPage = path === "/creator" || path.startsWith("/creator/");
-  if ((creatorApi || studioApi || creatorPage || studioPage) && !user) {
+  if ((creatorApi || studioApi || creatorPage || studioPage) && !subject) {
     if (creatorApi || studioApi) {
       const denied = NextResponse.json({ error: "unauthenticated" }, { status: 401 });
-      for (const cookie of response.cookies.getAll()) denied.cookies.set(cookie);
-      return denied;
+      return copyAuthState(response, denied);
     }
     const redirectUrl = request.nextUrl.clone();
     redirectUrl.pathname = "/login";
     redirectUrl.search = "";
     redirectUrl.searchParams.set("next", safeNextPath(path));
     const redirect = NextResponse.redirect(redirectUrl);
-    for (const cookie of response.cookies.getAll()) redirect.cookies.set(cookie);
-    return redirect;
+    return copyAuthState(response, redirect);
   }
   return response;
+}
+
+function copyAuthState(source: NextResponse, target: NextResponse) {
+  for (const cookie of source.cookies.getAll()) target.cookies.set(cookie);
+  for (const [name, value] of source.headers) {
+    if (["cache-control", "expires", "pragma"].includes(name.toLowerCase())) {
+      target.headers.set(name, value);
+    }
+  }
+  return target;
 }
 
 export const config = {

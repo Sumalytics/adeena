@@ -1,3 +1,4 @@
+import { generateModelPlan, type ModelOptions } from "./generation-model";
 import { randomUUID } from "node:crypto";
 import type { Sql } from "postgres";
 import { z } from "zod";
@@ -5,7 +6,7 @@ import { AUDIENCE_OPTIONS } from "@/app/studio/studio-form";
 import { AgeBand, Uuid } from "@/contracts/common";
 import { compileExperiencePlan, newExperienceIds, type Compilation, type GenerationSource } from "@/experience/compile";
 import type { CreatorDraftSummary, CreatorExperienceView, GenerationStatus, GenerationUsage } from "@/experience/public";
-import { COMPILER_VERSION, CONFIGURED_PROVIDER, FIXTURE_PRICE_VERSION, FIXTURE_PROVIDER, PROMPT_VERSION } from "@/experience/provider";
+import { COMPILER_VERSION, CONFIGURED_PROVIDER, FIXTURE_PRICE_VERSION, FIXTURE_PROVIDER, PROMPT_VERSION, LIVE_PLAN_PROMPT_VERSION } from "@/experience/provider";
 import { parseManifest } from "@adeena/experience-schema";
 import { SourceError, SOURCE_ERROR_CODES, type SourceErrorCode } from "@/source/errors";
 import { limitedSensitivityMatch } from "@/topic/analyze";
@@ -13,7 +14,6 @@ import { withWorkspace, type AuthorizedWorkspace } from "./authz";
 import { databaseFailure } from "./client";
 import type { VerifiedIdentity } from "./identity";
 
-const LEASE_OWNER = "creator-request";
 const BLOCKING = new Set(["review-required", "sensitive-domain", "unsafe-title", "rights-blocked"]);
 const STATUSES = new Set<GenerationStatus>(["queued", "planning", "compiling", "validating", "ready", "failed", "cancelled"]);
 
@@ -26,6 +26,8 @@ type Run = {
   source: LoadedSource;
   sourceChars: number;
   attempt: number;
+  provider: typeof FIXTURE_PROVIDER | typeof CONFIGURED_PROVIDER;
+  leaseOwner: string;
 };
 
 type Gate = { kind: "done"; view: CreatorExperienceView } | { kind: "stop"; code: SourceErrorCode } | Run;
@@ -40,10 +42,10 @@ export async function createPlayableExperience(input: {
   ageBand: AgeBand;
   idempotencyKey: string;
   authorizeGeneration: true;
-  provider: typeof FIXTURE_PROVIDER;
+  provider: typeof FIXTURE_PROVIDER | typeof CONFIGURED_PROVIDER;
   compiler?: (source: GenerationSource) => Compilation;
   replayedConflict?: boolean;
-}) {
+} & ModelOptions) {
   assertGeneration(input);
   try {
     const prepared = await withWorkspace(input.sql, input.identity, input.workspaceId, async (workspace) => {
@@ -81,8 +83,8 @@ export async function createPlayableExperience(input: {
           audience_label, age_band, compiler_version, prompt_version, provider, status, created_by
         ) values (
           ${jobId}::uuid, ${input.workspaceId}::uuid, ${input.documentVersionId}::uuid, ${input.topicCandidateId}::uuid,
-          ${input.idempotencyKey}::uuid, ${input.audienceLabel}, ${input.ageBand}, ${COMPILER_VERSION}, ${PROMPT_VERSION},
-          ${FIXTURE_PROVIDER}, 'queued', ${workspace.userId}::uuid
+          ${input.idempotencyKey}::uuid, ${input.audienceLabel}, ${input.ageBand}, ${COMPILER_VERSION}, ${input.provider === FIXTURE_PROVIDER ? PROMPT_VERSION : LIVE_PLAN_PROMPT_VERSION},
+          ${input.provider}, 'queued', ${workspace.userId}::uuid
         )
       `;
       return claimRun(workspace, jobId, input.topicCandidateId, loaded);
@@ -104,7 +106,7 @@ export async function resumePlayableExperience(input: {
   workspaceId: string;
   jobId: string;
   compiler?: (source: GenerationSource) => Compilation;
-}) {
+} & ModelOptions) {
   if (!Uuid.safeParse(input.jobId).success) throw new SourceError("invalid-generation");
   try {
     const prepared = await withWorkspace(input.sql, input.identity, input.workspaceId, async (workspace) => {
@@ -150,9 +152,9 @@ export async function resumePlayableExperience(input: {
 export async function listPlayableDrafts(sql: Sql, identity: VerifiedIdentity, workspaceId: string) {
   try {
     return await withWorkspace(sql, identity, workspaceId, async ({ tx }) => {
-      const rows = await tx<{ id: string; title: string | null; review_status: string | null; publication_status: string | null }[]>`
+      const rows = await tx<{ id: string; title: string | null; review_status: string | null; publication_status: string | null; provider: string }[]>`
         select v.id::text, v.manifest->>'title' as title,
-          coalesce(j.review_status, e.review_status) as review_status, v.publication_status
+          coalesce(j.review_status, e.review_status) as review_status, v.publication_status, coalesce(j.provider,e.provider) as provider
         from experience_versions v
         left join experience_generation_jobs j on j.id = v.job_id and j.workspace_id = v.workspace_id
         left join experience_edit_jobs e on e.id = v.edit_job_id and e.workspace_id = v.workspace_id
@@ -170,7 +172,7 @@ export async function listPlayableDrafts(sql: Sql, identity: VerifiedIdentity, w
           title: publicTitle(row.title),
           reviewStatus: row.review_status,
           publicationStatus: "unpublished",
-          liveModel: false,
+          liveModel: row.provider === CONFIGURED_PROVIDER,
         }];
       });
     });
@@ -280,13 +282,16 @@ export async function readPlayableExperience(sql: Sql, identity: VerifiedIdentit
   }
 }
 
-async function finish(input: { sql: Sql; identity: VerifiedIdentity; workspaceId: string; compiler?: (source: GenerationSource) => Compilation }, run: Run) {
+async function finish(input: { sql: Sql; identity: VerifiedIdentity; workspaceId: string; compiler?: (source: GenerationSource) => Compilation } & ModelOptions, run: Run) {
   const started = Date.now();
-  const marked = await withWorkspace(input.sql, input.identity, input.workspaceId, async ({ tx }) => mark(tx, input.workspaceId, run.jobId, "compiling"));
+  const marked = await withWorkspace(input.sql, input.identity, input.workspaceId, async ({ tx }) => mark(tx, input.workspaceId, run.jobId, "compiling", run.leaseOwner));
   if (!marked) return currentView(input, run.jobId, false);
   let outcome: Compilation;
   try {
-    outcome = (input.compiler ?? compileExperiencePlan)({ ...run.source, ...newExperienceIds() });
+    const source = { ...run.source, ...newExperienceIds() };
+    outcome = run.provider === CONFIGURED_PROVIDER
+      ? await generateModelPlan({ ...input, jobId: run.jobId, leaseOwner: run.leaseOwner, source })
+      : (input.compiler ?? compileExperiencePlan)(source);
   } catch {
     outcome = { ok: false, code: "invalid-experience", diagnostics: [{ code: "compiler.stopped", message: "The compiler stopped." }], simulation: { ok: false } };
   }
@@ -294,7 +299,7 @@ async function finish(input: { sql: Sql; identity: VerifiedIdentity; workspaceId
     outcome = { ok: false, code: "invalid-experience", diagnostics: [{ code: "manifest.locator", message: "The manifest locator was rejected." }], simulation: { ok: false } };
   }
   const compileMs = Date.now() - started;
-  const validating = await withWorkspace(input.sql, input.identity, input.workspaceId, async ({ tx }) => mark(tx, input.workspaceId, run.jobId, "validating"));
+  const validating = await withWorkspace(input.sql, input.identity, input.workspaceId, async ({ tx }) => mark(tx, input.workspaceId, run.jobId, "validating", run.leaseOwner));
   if (!validating) return currentView(input, run.jobId, false);
   const saved = await withWorkspace(input.sql, input.identity, input.workspaceId, async (workspace) => persist(workspace, input.workspaceId, run, outcome, compileMs, Date.now() - started));
   if (saved.kind === "stop") throw new SourceError(saved.code);
@@ -385,18 +390,28 @@ async function loadSource(workspace: AuthorizedWorkspace, input: {
 }
 
 async function claimRun(workspace: AuthorizedWorkspace, jobId: string, topicCandidateId: string, loaded: { source: LoadedSource; sourceChars: number }): Promise<Gate> {
-  const claimed = await workspace.tx<{ id: string; attempt_count: number }[]>`
+  const leaseOwner = randomUUID();
+  // Never repeat a configured call after a process loss. Its cost reservation
+  // remains auditable and the user must explicitly start a different workflow.
+  const abandoned = await workspace.tx`update experience_generation_jobs j set status='failed',permanent=true,
+    failure_code='provider-unavailable',lease_owner=null,lease_expires_at=null,updated_at=now()
+    where j.id=${jobId}::uuid and j.workspace_id=${workspace.workspaceId}::uuid and j.provider='configured-provider'
+      and not j.permanent and j.lease_expires_at < now()
+      and exists(select 1 from experience_generation_costs c where c.job_id=j.id and c.call_count>0)
+    returning j.id`;
+  if (abandoned.length) return { kind: "stop", code: "provider-unavailable" };
+  const claimed = await workspace.tx<{ id: string; attempt_count: number; provider: typeof FIXTURE_PROVIDER | typeof CONFIGURED_PROVIDER }[]>`
     update experience_generation_jobs
-    set status = 'planning', attempt_count = attempt_count + 1, lease_owner = ${LEASE_OWNER},
-        lease_expires_at = now() + interval '30 seconds', updated_at = now(), failure_code = null
+    set status = 'planning', attempt_count = attempt_count + 1, lease_owner = ${leaseOwner},
+        lease_expires_at = now() + interval '180 seconds', updated_at = now(), failure_code = null
     where id = ${jobId}::uuid and workspace_id = ${workspace.workspaceId}::uuid and permanent = false
       and attempt_count < max_attempts
       and (status = 'queued' or (status in ('planning', 'compiling', 'validating') and lease_expires_at < now()))
-    returning id::text, attempt_count
+    returning id::text, attempt_count, provider
   `;
   const claim = claimed[0];
   if (claim) {
-    return { kind: "run", jobId, topicCandidateId, source: loaded.source, sourceChars: loaded.sourceChars, attempt: claim.attempt_count };
+    return { kind: "run", jobId, topicCandidateId, source: loaded.source, sourceChars: loaded.sourceChars, attempt: claim.attempt_count, provider: claim.provider, leaseOwner };
   }
   const view = await present(workspace, jobId, false);
   if (!view) throw new SourceError("cross-workspace");
@@ -417,7 +432,7 @@ async function persist(
   const locked = await workspace.tx<{ id: string }[]>`
     update experience_generation_jobs
     set source_chars = ${run.sourceChars}, compile_ms = ${compileMs}, duration_ms = ${durationMs}, updated_at = now()
-    where id = ${run.jobId}::uuid and workspace_id = ${workspaceId}::uuid and lease_owner = ${LEASE_OWNER} and status = 'validating'
+    where id = ${run.jobId}::uuid and workspace_id = ${workspaceId}::uuid and lease_owner = ${run.leaseOwner} and status = 'validating'
     returning id::text
   `;
   if (locked.length === 0) {
@@ -434,7 +449,7 @@ async function persist(
         prompt_version, source_span_ids, manifest, publication_status, created_by
       ) values (
         ${versionId}::uuid, ${workspaceId}::uuid, ${run.source.documentVersionId}::uuid, ${run.topicCandidateId}::uuid,
-        ${run.jobId}::uuid, ${outcome.manifest.experienceId}::uuid, ${COMPILER_VERSION}, ${PROMPT_VERSION},
+        ${run.jobId}::uuid, ${outcome.manifest.experienceId}::uuid, ${COMPILER_VERSION}, ${outcome.plan.promptVersion},
         ${JSON.stringify(outcome.plan.sourceReferences.map((item) => item.spanId))}::jsonb,
         ${JSON.stringify(outcome.manifest)}::jsonb, 'unpublished', ${workspace.userId}::uuid
       )
@@ -463,9 +478,9 @@ async function persist(
       id, workspace_id, job_id, provider, model, pricing_version, input_tokens, output_tokens, call_count,
       retry_count, estimated_cost_micros, actual_cost_micros, currency, usage_kind, created_by
     ) values (
-      ${randomUUID()}::uuid, ${workspaceId}::uuid, ${run.jobId}::uuid, ${FIXTURE_PROVIDER}, 'none', ${FIXTURE_PRICE_VERSION},
+      ${randomUUID()}::uuid, ${workspaceId}::uuid, ${run.jobId}::uuid, ${run.provider}, 'none', ${run.provider === FIXTURE_PROVIDER ? FIXTURE_PRICE_VERSION : "unconfigured"},
       0, 0, 0, ${Math.max(0, run.attempt - 1)}, null, 0, 'USD', 'none', ${workspace.userId}::uuid
-    )
+    ) on conflict (job_id) do nothing
   `;
   await workspace.tx`
     update experience_generation_jobs
@@ -520,7 +535,7 @@ async function present(workspace: AuthorizedWorkspace, jobId: string, replayed: 
     where j.id = ${jobId}::uuid and j.workspace_id = ${workspace.workspaceId}::uuid
   `;
   const row = rows[0];
-  if (!row || !STATUSES.has(row.status as GenerationStatus) || row.provider !== FIXTURE_PROVIDER) return null;
+  if (!row || !STATUSES.has(row.status as GenerationStatus) || (row.provider !== FIXTURE_PROVIDER && row.provider !== CONFIGURED_PROVIDER)) return null;
   const status = row.status as GenerationStatus;
   const versionId = row.experience_version_id;
   const usage: GenerationUsage | null = row.usage_kind === "actual" || row.usage_kind === "estimate" || row.usage_kind === "none"
@@ -546,28 +561,28 @@ async function present(workspace: AuthorizedWorkspace, jobId: string, replayed: 
     rightsStatus: row.rights_status === "cleared" || row.rights_status === "blocked" || row.rights_status === "unverified" ? row.rights_status : null,
     failureCode: row.failure_code,
     replayed,
-    provider: FIXTURE_PROVIDER,
-    liveModel: false,
-    aiGenerationAuthorized: false,
+    provider: row.provider,
+    liveModel: row.provider === CONFIGURED_PROVIDER,
+    aiGenerationAuthorized: row.provider === CONFIGURED_PROVIDER,
     usage,
     previewPath: status === "ready" && versionId ? `/creator/preview/${versionId}` : null,
   };
 }
 
-async function mark(tx: Sql, workspaceId: string, jobId: string, status: "compiling" | "validating") {
+async function mark(tx: Sql, workspaceId: string, jobId: string, status: "compiling" | "validating", leaseOwner: string) {
   const rows = await tx<{ id: string }[]>`
     update experience_generation_jobs
     set status = ${status}, updated_at = now()
-    where id = ${jobId}::uuid and workspace_id = ${workspaceId}::uuid and lease_owner = ${LEASE_OWNER}
+    where id = ${jobId}::uuid and workspace_id = ${workspaceId}::uuid and lease_owner = ${leaseOwner}
       and permanent = false and status in ('planning', 'compiling', 'validating')
     returning id::text
   `;
   return rows.length > 0;
 }
 
-function assertGeneration(input: { authorizeGeneration: true; provider: typeof FIXTURE_PROVIDER; documentVersionId: string; topicCandidateId: string; idempotencyKey: string; audienceLabel: string; ageBand: string }) {
+function assertGeneration(input: { authorizeGeneration: true; provider: typeof FIXTURE_PROVIDER | typeof CONFIGURED_PROVIDER; documentVersionId: string; topicCandidateId: string; idempotencyKey: string; audienceLabel: string; ageBand: string }) {
   if (input.authorizeGeneration !== true) throw new SourceError("generation-denied");
-  if (input.provider !== FIXTURE_PROVIDER) throw new SourceError("generation-unavailable");
+  if (input.provider !== FIXTURE_PROVIDER && input.provider !== CONFIGURED_PROVIDER) throw new SourceError("generation-unavailable");
   if (!Uuid.safeParse(input.documentVersionId).success || !Uuid.safeParse(input.topicCandidateId).success || !Uuid.safeParse(input.idempotencyKey).success) {
     throw new SourceError("invalid-generation");
   }

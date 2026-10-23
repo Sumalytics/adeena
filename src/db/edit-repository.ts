@@ -1,3 +1,4 @@
+import { claimFreeRequest, reserveAnotherEstimate, reconcileReservation } from "./model-budget";
 import { randomUUID } from "node:crypto";
 import type { Sql } from "postgres";
 import { z } from "zod";
@@ -48,7 +49,7 @@ import type { VerifiedIdentity } from "./identity";
 
 const LEASE_OWNER = "creator-edit";
 const READY_CAP = 4;
-const FREE_SESSION_ID = randomUUID();
+
 
 type ProposalRow = {
   id: string;
@@ -901,32 +902,6 @@ async function claimFreeSlot(workspace: AuthorizedWorkspace, jobId: string, usag
   return { status: "ok" as const };
 }
 
-async function claimFreeRequest(
-  workspace: AuthorizedWorkspace,
-  sessionLimit: number,
-  dayLimit: number,
-  locked?: { session_id: string; session_requests: number; day_requests: number; usage_day: string },
-) {
-  const row = locked ?? (await workspace.tx<{ session_id: string; session_requests: number; day_requests: number; usage_day: string }[]>`
-    select session_id, session_requests::int, day_requests::int, to_char(usage_day, 'YYYY-MM-DD') as usage_day
-    from adeena_free_quota where id = 'development' for update
-  `)[0];
-  if (!row) return false;
-  const todayRows = await workspace.tx<{ day: string }[]>`select to_char((now() at time zone 'utc')::date, 'YYYY-MM-DD') as day`;
-  const today = todayRows[0]?.day ?? "";
-  let sessionRequests = row.session_id === FREE_SESSION_ID ? Number(row.session_requests) : 0;
-  let dayRequests = row.usage_day === today ? Number(row.day_requests) : 0;
-  if (sessionRequests + 1 > sessionLimit || dayRequests + 1 > dayLimit) return false;
-  sessionRequests += 1;
-  dayRequests += 1;
-  await workspace.tx`
-    update adeena_free_quota
-    set session_id = ${FREE_SESSION_ID}, session_requests = ${sessionRequests}, day_requests = ${dayRequests},
-      usage_day = ${today}::date, updated_at = now()
-    where id = 'development'
-  `;
-  return true;
-}
 
 async function insertCost(workspace: AuthorizedWorkspace, jobId: string, usage: EditUsage) {
   await workspace.tx`
@@ -981,29 +956,6 @@ async function claimModelSlot(workspace: AuthorizedWorkspace, jobId: string, usa
   return { status: "ok" as const, reservedMicros: Number(updated[0]?.reserved_micros ?? reserved + usage.estimatedCostMicros) };
 }
 
-async function reserveAnotherEstimate(workspace: AuthorizedWorkspace, estimatedMicros: number, spendCapMicros: number) {
-  const locked = await workspace.tx<{ reserved_micros: number }[]>`
-    select reserved_micros::int from adeena_edit_spend where id = 'development' for update
-  `;
-  const reserved = locked[0] ? Number(locked[0].reserved_micros) : null;
-  if (reserved === null || reserved + estimatedMicros > spendCapMicros) return false;
-  await workspace.tx`
-    update adeena_edit_spend
-    set reserved_micros = reserved_micros + ${estimatedMicros}, updated_at = now()
-    where id = 'development'
-  `;
-  return true;
-}
-
-async function reconcileReservation(workspace: AuthorizedWorkspace, reservedMicros: number, keptMicros: number) {
-  const delta = keptMicros - reservedMicros;
-  await workspace.tx`select reserved_micros from adeena_edit_spend where id = 'development' for update`;
-  await workspace.tx`
-    update adeena_edit_spend
-    set reserved_micros = greatest(0, reserved_micros + ${delta}), updated_at = now()
-    where id = 'development'
-  `;
-}
 
 function accepted(versionId: string, replayed: boolean): EditOutcome {
   return { kind: "accepted", currentVersionId: versionId, previewPath: `/creator/preview/${versionId}`, replayed };

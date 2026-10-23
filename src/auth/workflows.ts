@@ -18,7 +18,7 @@ import {
   selectWorkflowSource,
   selectWorkflowTopic,
 } from "@/db/workflow-repository";
-import { FIXTURE_PROVIDER, closedProviderError, selectGenerationProvider } from "@/experience/provider";
+import { FIXTURE_PROVIDER, CONFIGURED_PROVIDER, configuredEditAuthorization, closedProviderError, selectGenerationProvider } from "@/experience/provider";
 import { SourceError } from "@/source/errors";
 import { creatorDatabase } from "./database";
 import { requestOriginAllowed } from "./password-post";
@@ -173,7 +173,7 @@ function generateFailure(error: unknown) {
   if (error.code === "insufficient-source" || error.code === "invalid-experience" || error.code === "stale-extraction") {
     return { status: 422 as const, body: { error: error.code } };
   }
-  if (error.code === "generation-unavailable") return { status: 503 as const, body: { error: error.code } };
+  if (error.code === "generation-unavailable" || error.code === "provider-unavailable") return { status: 503 as const, body: { error: error.code } };
   return { status: 403 as const, body: { error: error.code } };
 }
 
@@ -210,7 +210,7 @@ export async function creatorWorkflowGenerateResponse(input: {
   sql: Sql;
   workflowId: string;
   body: unknown;
-  provider?: typeof FIXTURE_PROVIDER;
+  provider?: typeof FIXTURE_PROVIDER | typeof CONFIGURED_PROVIDER;
   env?: Record<string, string | undefined>;
 }) {
   if (!input.session) return { status: 401 as const, body: { error: "unauthenticated" } };
@@ -219,7 +219,7 @@ export async function creatorWorkflowGenerateResponse(input: {
   if (!body.success) return { status: 400 as const, body: { error: "invalid-workflow" } };
   const env = input.env ?? process.env;
   const provider = input.provider ?? selectGenerationProvider(env);
-  if (provider !== FIXTURE_PROVIDER) {
+  if (provider !== FIXTURE_PROVIDER && (provider !== CONFIGURED_PROVIDER || !configuredEditAuthorization(env).ok)) {
     const code = closedProviderError(env);
     return { status: code === "generation-unavailable" ? 503 as const : 403 as const, body: { error: code } };
   }
@@ -242,7 +242,7 @@ export async function creatorWorkflowGenerateResponse(input: {
       workspaceId: workspace.workspaceId,
     };
     let view = reserved.generationJobId
-      ? await resumePlayableExperience({ ...shared, jobId: reserved.generationJobId })
+      ? await resumePlayableExperience({ ...shared, jobId: reserved.generationJobId, env })
       : await createPlayableExperience({
         ...shared,
         documentVersionId: reserved.documentVersionId,
@@ -251,10 +251,10 @@ export async function creatorWorkflowGenerateResponse(input: {
         ageBand: reserved.ageBand,
         idempotencyKey: reserved.generationIdempotencyKey,
         authorizeGeneration: true,
-        provider,
+        provider, env,
       });
     for (let attempt = 0; attempt < 4 && view.status !== "ready" && view.status !== "failed" && view.status !== "cancelled"; attempt += 1) {
-      view = await resumePlayableExperience({ ...shared, jobId: view.jobId });
+      view = await resumePlayableExperience({ ...shared, jobId: view.jobId, env });
     }
     const recorded = await recordWorkflowGeneration({
       ...shared,

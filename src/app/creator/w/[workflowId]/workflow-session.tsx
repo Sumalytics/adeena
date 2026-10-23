@@ -1,3 +1,4 @@
+import { CONFIGURED_PROVIDER, selectGenerationProvider } from "@/experience/provider";
 import { connection } from "next/server";
 import { redirect } from "next/navigation";
 import { AUDIENCE_OPTIONS } from "@/app/studio/studio-form";
@@ -50,9 +51,9 @@ export async function WorkflowSession({ params }: { params: Promise<{ workflowId
         experienceVersionId: read.body.generation.experienceVersionId,
         failureCode: read.body.generation.failureCode,
         previewPath: read.body.generation.previewPath,
-        liveModel: false,
+        liveModel: read.body.generation.liveModel,
       };
     }
   }
-  return <WorkflowEditor workflow={workflow} sources={sources} recommendation={recommendation} generation={generation} />;
+  return <WorkflowEditor workflow={workflow} sources={sources} recommendation={recommendation} generation={generation} liveGeneration={selectGenerationProvider(process.env) === CONFIGURED_PROVIDER} />;
 }

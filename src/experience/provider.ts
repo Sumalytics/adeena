@@ -8,6 +8,9 @@ export const FIXTURE_PROVIDER = "deterministic-fixture" as const;
 export const CONFIGURED_PROVIDER = "configured-provider" as const;
 export const FIXTURE_PRICE_VERSION = "fixture-0" as const;
 export const PROMPT_VERSION = "fixture-plan@1" as const;
+export const LIVE_PLAN_PROMPT_VERSION = "source-plan@1" as const;
+export const GENERATION_LIMITS = { plan: { input: 8000, output: 3500 }, review: { input: 16000, output: 1000 } } as const;
+export type StructuredGeneration = { kind: keyof typeof GENERATION_LIMITS; schema: object };
 export const COMPILER_VERSION = "1" as const;
 const MODEL_NAME = /^[a-z0-9@.:/-]{1,80}$/;
 const PRICE_NAME = /^[a-z0-9@.-]{1,40}$/;
@@ -210,19 +213,6 @@ export function closedProviderError(env: ProviderEnv): SourceErrorCode {
   return paid.ok ? "generation-unavailable" : paid.code;
 }
 
-/**
- * Experience generation still stops before the network, including in free-development.
- * A paid edit needs a non-zero verified schedule, an HTTPS endpoint, and explicit spend authorization.
- * free-development never uses that paid schedule and never calls the OpenAI endpoint.
- * Jobs keep a two-attempt ceiling and one cost row.
- */
-export async function requestPaidPlan(input: { env: ProviderEnv; fetchImpl: typeof fetch }) {
-  const paid = paidCallAuthorization(input.env);
-  if (!paid.ok) return paid;
-  void input.fetchImpl;
-  return { ok: false as const, code: "generation-unavailable" as const };
-}
-
 export type PaidEditResult = {
   ok: boolean;
   code?: "budget-unavailable" | "generation-unavailable" | "provider-unavailable" | "invalid-experience" | "unsupported-edit";
@@ -307,6 +297,7 @@ export async function requestPaidEdit(input: {
   outputSchema?: object;
   editMode?: "dialogue" | "graph";
   dialogueTarget?: DialogueTarget;
+  structuredGeneration?: StructuredGeneration;
 }): Promise<PaidEditResult> {
   const mode = input.env.ADEENA_AI_EXECUTION_MODE?.trim() ?? "";
   if (mode === "free-development") return requestFreeEdit(input);
@@ -314,8 +305,12 @@ export async function requestPaidEdit(input: {
   const auth = paidEditAuthorization(input.env, input.schedules ?? PRICE_SCHEDULES);
   if (!auth.ok) return unused(auth.code, "none", "unconfigured", 0);
   const spend = auth.spend;
-  const estimated = editCallEstimate(spend);
-  if (estimated === null || estimated > spend.maxEditMicros || estimated > spend.spendCapMicros || input.userText.length > 12_000 || input.systemText.length > 2_000) {
+  const tokenLimits = input.structuredGeneration ? GENERATION_LIMITS[input.structuredGeneration.kind] : { input: MAX_INPUT_TOKENS, output: MAX_OUTPUT_TOKENS };
+  const estimated = tokenCost(spend, tokenLimits.input, 0, tokenLimits.output);
+  // A conservative byte bound includes the schema and framing, rather than
+  // assuming four characters per token for a financially authorized request.
+  if (input.structuredGeneration && Buffer.byteLength(JSON.stringify({ instructions: input.systemText, input: input.userText, schema: input.structuredGeneration.schema }), "utf8") + 512 > tokenLimits.input) return unused("budget-unavailable", spend.model, spend.priceVersion, estimated ?? 0);
+  if (estimated === null || estimated > spend.maxEditMicros || estimated > spend.spendCapMicros || input.userText.length > (input.structuredGeneration ? 18000 : 12000) || input.systemText.length > (input.structuredGeneration ? 4000 : 2000)) {
     return unused("budget-unavailable", spend.model, spend.priceVersion, estimated ?? 0);
   }
   const key = input.env.ADEENA_AI_API_KEY?.trim() ?? "";
@@ -338,13 +333,13 @@ export async function requestPaidEdit(input: {
         body: JSON.stringify({
           model: spend.model,
           store: false,
-          max_output_tokens: MAX_OUTPUT_TOKENS,
+          max_output_tokens: tokenLimits.output,
           reasoning: { effort: "none" },
           input: [
             { role: "system", content: input.systemText },
             { role: "user", content: input.userText },
           ],
-          text: { format: { type: "json_schema", name: "experience_edit", strict: true, schema: EDIT_OUTPUT_SCHEMA } },
+          text: { format: { type: "json_schema", name: input.structuredGeneration ? `experience_${input.structuredGeneration.kind}` : "experience_edit", strict: true, schema: input.structuredGeneration?.schema ?? EDIT_OUTPUT_SCHEMA } },
         }),
       });
     } catch {
@@ -379,6 +374,7 @@ export async function requestPaidEdit(input: {
     return charged(code, spend, estimated, callCount, retryCount, blankUsage(), unbilled ? "none" : "estimate", 0, unbilled, responseId);
   }
   if (!body.parsed) return charged("invalid-experience", spend, estimated, callCount, retryCount, blankUsage(), "estimate", 0, false, responseId);
+  if (input.structuredGeneration && (usage.inputTokens > tokenLimits.input || usage.outputTokens > tokenLimits.output)) return finish(spend, estimated, callCount, retryCount, usage, responseId, "budget-unavailable", null);
   return finish(spend, estimated, callCount, retryCount, usage, responseId, null, readModelContent(body.parsed));
 }
 
@@ -393,12 +389,14 @@ async function requestFreeEdit(input: {
   outputSchema?: object;
   editMode?: "dialogue" | "graph";
   dialogueTarget?: DialogueTarget;
+  structuredGeneration?: StructuredGeneration;
 }): Promise<PaidEditResult> {
   const auth = freeEditAuthorization(input.env);
   if (!auth.ok) return { ...unused(auth.code, GROQ_GPT_OSS_120B_MODEL, GROQ_COMMERCIAL_PRICE, 0), executionMode: "free-development" };
-  const ceiling = billedMicros(GROQ_COMMERCIAL_SCHEDULE, MAX_INPUT_TOKENS, 0, MAX_OUTPUT_TOKENS) ?? 0;
+  const tokenLimits = input.structuredGeneration ? GENERATION_LIMITS[input.structuredGeneration.kind] : { input: MAX_INPUT_TOKENS, output: MAX_OUTPUT_TOKENS };
+  const ceiling = billedMicros(GROQ_COMMERCIAL_SCHEDULE, tokenLimits.input, 0, tokenLimits.output) ?? 0;
   const proxyTokens = Math.ceil((input.systemText.length + input.userText.length) / 4);
-  if (input.userText.length > 12_000 || input.systemText.length > 2_000 || proxyTokens > MAX_INPUT_TOKENS) {
+  if (input.userText.length > (input.structuredGeneration ? 18000 : 12000) || input.systemText.length > (input.structuredGeneration ? 4000 : 2000) || proxyTokens > tokenLimits.input) {
     return { ...unused("budget-unavailable", auth.model, auth.priceVersion, 0), executionMode: "free-development" };
   }
   const key = input.env.ADEENA_GROQ_API_KEY?.trim() ?? "";
@@ -423,10 +421,10 @@ async function requestFreeEdit(input: {
           model: auth.model,
           instructions: input.systemText,
           input: input.userText,
-          max_output_tokens: MAX_OUTPUT_TOKENS,
+          max_output_tokens: tokenLimits.output,
           reasoning: { effort: "low" },
           tool_choice: "none",
-          text: { format: { type: "json_schema", name: "experience_edit", strict: true, schema: input.outputSchema ?? groqTransportSchema() } },
+          text: { format: { type: "json_schema", name: input.structuredGeneration ? `experience_${input.structuredGeneration.kind}` : "experience_edit", strict: true, schema: input.structuredGeneration?.schema ?? input.outputSchema ?? groqTransportSchema() } },
         }),
       });
     } catch {
@@ -473,6 +471,11 @@ async function requestFreeEdit(input: {
   if (!extracted.ok) {
     const status = extracted.status === "refusal" || extracted.status === "incomplete" || extracted.status === "failed" ? extracted.status : "invalid";
     return { ...asFree(finish(spend, ceiling, callCount, retryCount, usage, responseId, null, { status }), limits, started, ceiling), diagnostic: extracted.diagnostic };
+  }
+  if (input.structuredGeneration) {
+    const result = asFree(finish(spend, ceiling, callCount, retryCount, usage, responseId, null, extracted.payload), limits, started, ceiling);
+    if (result.inputTokens > tokenLimits.input || result.outputTokens > tokenLimits.output) return { ...result, ok: false, code: "budget-unavailable", content: undefined };
+    return result;
   }
   const mapped = input.editMode === "graph" ? mapGroqGraphTransport(extracted.payload) : mapGroqTransport(extracted.payload, input.dialogueTarget);
   if (!mapped.ok) {

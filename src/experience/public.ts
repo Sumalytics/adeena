@@ -23,9 +23,9 @@ export type CreatorExperienceView = {
   rightsStatus: "unverified" | "cleared" | "blocked" | null;
   failureCode: string | null;
   replayed: boolean;
-  provider: "deterministic-fixture";
-  liveModel: false;
-  aiGenerationAuthorized: false;
+  provider: "deterministic-fixture" | "configured-provider";
+  liveModel: boolean;
+  aiGenerationAuthorized: boolean;
   usage: GenerationUsage | null;
   previewPath: string | null;
 };
@@ -35,5 +35,5 @@ export type CreatorDraftSummary = {
   title: string;
   reviewStatus: "ready-for-review" | "review-required";
   publicationStatus: "unpublished";
-  liveModel: false;
+  liveModel: boolean;
 };

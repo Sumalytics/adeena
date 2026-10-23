@@ -30,11 +30,13 @@ export function WorkflowEditor({
   sources,
   recommendation,
   generation,
+  liveGeneration = false,
 }: {
   workflow: CreatorWorkflowView;
   sources: ExtractedSourceSummary[];
   recommendation: TopicRecommendationView | null;
   generation?: WorkflowGenerationState | null;
+  liveGeneration?: boolean;
 }) {
   const router = useRouter();
   const [current, setCurrent] = useState(workflow);
@@ -354,7 +356,7 @@ export function WorkflowEditor({
         <div className={styles.stageHeader}>
           <h2 id="generate-heading">Generate</h2>
         </div>
-        <p className={styles.help}>Development fixture. This compiles a private draft from the saved source. It is not live AI generation.</p>
+        <p className={styles.help}>{liveGeneration ? "Generate sends the selected source excerpts, topic and audience to the configured AI model, then checks the plan against the source and simulates every path. This authorizes the bounded generation request. The result stays private for your review; playback uses no AI calls." : "Development fixture. This compiles a private draft from the saved source. It is not live AI generation."}</p>
         {draft && draft.status !== "ready" ? <p className={styles.note} role="status">{generationStatusCopy(draft.status)}</p> : null}
         {draft?.status === "failed" ? <p className={styles.alert} role="alert">{generationFailureCopy(draft.failureCode)}</p> : null}
         {!topicReady ? <p className={styles.help}>Save a topic before generation. This page does not start a generation job until you ask.</p> : null}
@@ -366,7 +368,7 @@ export function WorkflowEditor({
               disabled={pending || stale || sourceDirty || audienceDirty}
               onClick={() => void generateDraft()}
             >
-              {generationRunning ? "Continue generation" : "Create playable experience"}
+              {generationRunning ? "Continue generation" : liveGeneration ? "Generate playable game" : "Create playable experience"}
             </button>
           </div>
         ) : null}

@@ -11,7 +11,7 @@ import {
   resumePlayableExperience,
 } from "@/db/experience-repository";
 import type { CreatorDraftSummary } from "@/experience/public";
-import { FIXTURE_PROVIDER, closedProviderError, selectGenerationProvider } from "@/experience/provider";
+import { FIXTURE_PROVIDER, CONFIGURED_PROVIDER, configuredEditAuthorization, closedProviderError, selectGenerationProvider } from "@/experience/provider";
 import { SourceError } from "@/source/errors";
 import type { VerifiedIdentity } from "@/db/identity";
 import { creatorDatabase } from "./database";
@@ -47,14 +47,14 @@ export async function creatorExperienceResponse(input: {
   session: CreatorSession | null;
   sql: Sql;
   body: unknown;
-  provider?: typeof FIXTURE_PROVIDER;
+  provider?: typeof FIXTURE_PROVIDER | typeof CONFIGURED_PROVIDER;
 }) {
   if (!input.session) return { status: 401 as const, body: { error: "unauthenticated" } };
   const body = GenerateBody.safeParse(input.body);
   if (!body.success) return { status: 400 as const, body: { error: "invalid-generation" } };
   const provider = input.provider ?? selectGenerationProvider(process.env);
-  if (provider !== FIXTURE_PROVIDER) {
-    const code = closedProviderError(process.env);
+  if (provider !== FIXTURE_PROVIDER && (provider !== CONFIGURED_PROVIDER || !configuredEditAuthorization(process.env).ok)) {
+    const code = provider === CONFIGURED_PROVIDER ? configuredEditAuthorization(process.env).code ?? "budget-unavailable" : closedProviderError(process.env);
     return { status: code === "generation-unavailable" ? 503 as const : 403 as const, body: { error: code } };
   }
   try {
@@ -86,7 +86,7 @@ export async function creatorExperienceContinueResponse(input: {
   if (!input.session) return { status: 401 as const, body: { error: "unauthenticated" } };
   const body = ContinueBody.safeParse(input.body);
   if (!body.success) return { status: 400 as const, body: { error: "invalid-generation" } };
-  if (selectGenerationProvider(process.env) !== FIXTURE_PROVIDER) {
+  if (selectGenerationProvider(process.env) !== FIXTURE_PROVIDER && !configuredEditAuthorization(process.env).ok) {
     const code = closedProviderError(process.env);
     return { status: code === "generation-unavailable" ? 503 as const : 403 as const, body: { error: code } };
   }

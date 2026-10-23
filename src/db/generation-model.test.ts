@@ -1,0 +1,89 @@
+import { randomUUID } from "node:crypto";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { specimen } from "@/experience/model-plan.examples";
+import { createFilesystemObjectStore } from "@/storage/filesystem";
+import { openDatabase, type DatabaseClient } from "./client";
+import { databaseUrl, applicationDatabaseUrl } from "./env";
+import { urlForDatabase } from "./test-database";
+import { migrateUp } from "./migrate";
+import { createWorkspace } from "./authz";
+import { issueIdentityForIsolatedTests } from "./identity";
+import { enqueueDurableSource } from "./source-repository";
+import { runExtractionOnce } from "./worker";
+import { recommendFirstTopic } from "./topic-repository";
+import { createPlayableExperience } from "./experience-repository";
+
+const env = { ADEENA_EXPERIENCE_PROVIDER: "configured-provider", ADEENA_AI_EXECUTION_MODE: "free-development", ADEENA_RUNTIME: "nonproduction-test", ADEENA_GROQ_PLAN: "free", ADEENA_AI_MODEL: "openai/gpt-oss-120b", ADEENA_AI_API_URL: "https://api.groq.com/openai/v1/responses", ADEENA_GROQ_API_KEY: "test-key" };
+describe("durable model generation", () => {
+  const database = `adeena_model_test_${randomUUID().replaceAll("-", "")}`;
+  let maintenance: DatabaseClient, admin: DatabaseClient, sql: DatabaseClient;
+  let root: string;
+  beforeAll(async () => {
+    maintenance = openDatabase(urlForDatabase(databaseUrl(), "postgres"));
+    await maintenance.unsafe(`CREATE DATABASE ${database}`);
+    admin = openDatabase(urlForDatabase(databaseUrl(), database));
+    sql = openDatabase(urlForDatabase(applicationDatabaseUrl(), database));
+    await migrateUp(admin);
+    root = await mkdtemp(path.join(tmpdir(), "adeena-model-"));
+  });
+  afterAll(async () => {
+    await sql?.end({ timeout: 1 }); await admin?.end({ timeout: 1 });
+    await maintenance.unsafe(`DROP DATABASE ${database}`); await maintenance.end();
+    if (root) await rm(root, { recursive: true, force: true });
+  });
+  it("reserves two calls, persists usage, replays without network, rejects semantic failure and enforces the shared quota", async () => {
+    const identity = issueIdentityForIsolatedTests(randomUUID());
+    const workspaceId = randomUUID();
+    await createWorkspace(sql, identity, { id: workspaceId, name: "Model test", workspaceType: "personal" });
+    const actor = { sql, identity, workspaceId };
+    const store = createFilesystemObjectStore(root);
+    const { source, plan } = specimen();
+    const uploaded = await enqueueDurableSource({ ...actor, filename: "garden.md", bytes: Buffer.from(`# Rain garden\n\n## Routes\n\n${source.spans[0].excerpt} ${source.spans[0].excerpt}`), store, idempotencyKey: randomUUID() });
+    await runExtractionOnce({ ...actor, store, leaseOwner: "model-test" });
+    const documentVersionId = uploaded.version.id;
+    const recommended = await recommendFirstTopic({ ...actor, documentVersionId, audienceLabel: "Primary learners", ageBand: "8-10", idempotencyKey: randomUUID() });
+    const topicCandidateId = recommended.recommendation!.topicCandidateId;
+    if (!topicCandidateId) throw new Error("Example topic was not selected");
+    let requests = 0, rejectReview = false;
+    const fetchImpl: typeof fetch = async (_url, init) => {
+      requests++;
+      const body = JSON.parse(String(init?.body));
+      const context = JSON.parse(body.input);
+      const result = body.text.format.name === "experience_plan" ? { ...plan, facts: plan.facts.map(fact => ({ ...fact, spanId: context.excerpts[0].id })) } : { grounded: !rejectReview, coherent: true, consequential: true, audienceSuitable: true, issues: [] };
+      return Response.json({ id: `resp_${requests}`, status: "completed", output: [{ type: "message", content: [{ type: "output_text", text: JSON.stringify(result) }] }], usage: { input_tokens: 1000, output_tokens: 800, output_tokens_details: { reasoning_tokens: 10 } } });
+    };
+    const input = { ...actor, documentVersionId, topicCandidateId, audienceLabel: "Primary learners", ageBand: "8-10" as const, idempotencyKey: randomUUID(), authorizeGeneration: true as const, provider: "configured-provider" as const, env, fetchImpl };
+    const first = await createPlayableExperience(input);
+    expect(first.status).toBe("ready");
+    const replay = await createPlayableExperience(input);
+    expect(replay.experienceVersionId).toBe(first.experienceVersionId);
+    expect(requests).toBe(2);
+    const [cost] = await admin`select * from experience_generation_costs where job_id=${first.jobId}`;
+    expect(cost).toMatchObject({ execution_mode: "free-development", call_count: 2, actual_cost_micros: 0, input_tokens: 2000, output_tokens: 1600, usage_kind: "actual" });
+    expect(cost.commercial_estimate_micros).toBeGreaterThan(0);
+    expect(cost.model_calls[1].review.grounded).toBe(true);
+    rejectReview = true;
+    await expect(createPlayableExperience({ ...input, idempotencyKey: randomUUID() })).rejects.toMatchObject({ code: "invalid-experience" });
+    expect(requests).toBe(4);
+    await expect(createPlayableExperience({ ...input, idempotencyKey: randomUUID() })).rejects.toMatchObject({ code: "budget-unavailable" });
+    expect(requests).toBe(4);
+    expect(await admin`select id from experience_versions`).toHaveLength(1);
+    const [quota] = await admin`select session_requests,day_requests from adeena_free_quota`;
+    expect(quota).toMatchObject({ session_requests: 4, day_requests: 4 });
+    // A separate quota scenario inside this disposable test database only.
+    await admin`update adeena_free_quota set session_requests=0,day_requests=0`;
+    let invalidCalls = 0;
+    const invalidInput = { ...input, idempotencyKey: randomUUID(), fetchImpl: (async () => {
+      invalidCalls++;
+      return Response.json({ status: "completed", output: [{ type: "message", content: [{ type: "output_text", text: "{}" }] }], usage: { input_tokens: 500, output_tokens: 50 } });
+    }) as typeof fetch };
+    await expect(createPlayableExperience(invalidInput)).rejects.toMatchObject({ code: "invalid-experience" });
+    await expect(createPlayableExperience(invalidInput)).rejects.toMatchObject({ code: "invalid-experience" });
+    expect(invalidCalls).toBe(1);
+    const [unused] = await admin`select session_requests,day_requests from adeena_free_quota`;
+    expect(unused).toMatchObject({ session_requests: 1, day_requests: 1 });
+  });
+});

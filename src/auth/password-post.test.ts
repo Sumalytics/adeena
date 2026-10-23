@@ -31,6 +31,8 @@ describe("password POST fallback", () => {
     expect(register).toContain('action="/auth/register"');
     expect(login).not.toMatch(/method=["']get["']/i);
     expect(register).not.toMatch(/method=["']get["']/i);
+    expect(login).not.toContain("onSubmit=");
+    expect(login).not.toContain("signInWithPassword");
   });
 
   it("rejects a cross-origin login before authentication", async () => {

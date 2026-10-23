@@ -160,12 +160,12 @@ export function TopicExplorer({ sources }: { sources: ExtractedSourceSummary[] }
         setMessage("Generation is still in progress.");
         return;
       }
-      if (!response.ok || body.publicationStatus !== "unpublished" || body.liveModel !== false || body.aiGenerationAuthorized !== false || !preview.startsWith("/creator/preview/")) {
+      if (!response.ok || body.publicationStatus !== "unpublished" || !preview.startsWith("/creator/preview/")) {
         setError(GENERATION_COPY[body.error ?? ""] ?? "The experience could not be created.");
         return;
       }
       setDraftPath(preview);
-      setDraftNote("This private draft was compiled by the local fixture from your source. It is not a live model result.");
+      setDraftNote(body.liveModel ? "A configured model planned this private game from your source. Review every path before sharing." : "This private draft was compiled by the local fixture from your source. It is not a live model result.");
       setMessage("The private draft is ready.");
     } catch {
       setError("The experience did not reach the workspace.");

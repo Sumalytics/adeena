@@ -24,6 +24,7 @@ export function topicSavePlan(view: TopicRecommendationView | null): "resolve" |
 }
 
 const GENERATION_COPY: Record<string, string> = {
+  "provider-unavailable": "The model did not finish. No fixture was substituted. Start a new experience to explicitly authorize another attempt.",
   "generation-unavailable": "AI generation is not configured. No experience was created.",
   "budget-unavailable": "Generation spending is not authorized. No experience was created.",
   "review-required": "This source needs review before an experience can be created.",
@@ -43,7 +44,7 @@ export type WorkflowGenerationState = {
   experienceVersionId: string | null;
   failureCode: string | null;
   previewPath: string | null;
-  liveModel: false;
+  liveModel: boolean;
 };
 
 export function generationFailureCopy(code: string | null | undefined) {

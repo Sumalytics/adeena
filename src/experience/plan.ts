@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { AgeBand, Uuid } from "@/contracts/common";
-import { COMPILER_VERSION, PROMPT_VERSION } from "./provider";
+import { COMPILER_VERSION, PROMPT_VERSION, LIVE_PLAN_PROMPT_VERSION } from "./provider";
 
 const Executable = /<script|javascript:|\beval\s*\(|\bnew\s+Function\b/i;
 const SceneId = z.string().trim().regex(/^[a-z][a-z0-9-]{0,40}$/);
@@ -40,7 +40,7 @@ const Ending = z.object({
 export const ExperiencePlanV1 = z.object({
   contract: z.literal("EXPERIENCE-PLAN-v1"),
   compilerVersion: z.literal(COMPILER_VERSION),
-  promptVersion: z.literal(PROMPT_VERSION),
+  promptVersion: z.enum([PROMPT_VERSION, LIVE_PLAN_PROMPT_VERSION]),
   topicTitle: text(80),
   audienceLabel: text(80),
   ageBand: AgeBand,
