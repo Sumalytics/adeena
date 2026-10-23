@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
-import { parseSourcePlan, reviewPasses, requestPlanStage } from "./model-plan";
+import { allowedFacts, modelPlanSchema, parseSourcePlan, reviewPasses, requestPlanStage } from "./model-plan";
 import { examples, specimen } from "./model-plan.examples";
 
 describe("source-specific model plans", () => {
@@ -38,7 +38,19 @@ describe("source-specific model plans", () => {
     expect(JSON.stringify(body)).toContain(source.topicTitle);
     expect(JSON.stringify(body)).toContain(source.audienceLabel);
     expect(JSON.stringify(body)).toContain(source.ageBand);
+    const schema = JSON.stringify(modelPlanSchema(source));
+    expect(schema).toContain(`\"enum\":[\"${source.spans[0].id}\"]`);
+    for (const fact of allowedFacts(source)) expect(schema).toContain(fact.claim);
     expect(result.ok).toBe(false);
     expect(result.content).toBeUndefined();
+  });
+  it("constrains structured claims to exact source sentences", () => {
+    const { source } = specimen();
+    const facts = allowedFacts(source);
+    expect(facts).toHaveLength(2);
+    expect(facts.every((fact) => source.spans.some((span) => span.id === fact.spanId && span.excerpt.includes(fact.claim)))).toBe(true);
+    const schema = JSON.stringify(modelPlanSchema(source));
+    expect(schema).toContain(facts[0].claim);
+    expect(schema).not.toContain("Rain gardens produce electricity.");
   });
 });

@@ -11,7 +11,7 @@ export default function Home() {
       <h1 className={styles.title}>Living Knowledge</h1>
       <p className={styles.lead}>
         Start with a source and an audience. Generate a preview, then share
-        only after rights and approval are clear.
+        when source permission and safety checks are clear.
       </p>
       <Suspense fallback={<p>Checking your session…</p>}>
         <HomeSession />

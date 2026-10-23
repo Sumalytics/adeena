@@ -8,19 +8,11 @@ import styles from "../../auth.module.css";
 import editorStyles from "./experience-editor.module.css";
 import { ExperiencePreview } from "./experience-preview";
 
-type HistoryItem = {
-  id: string;
-  title: string;
-  current: boolean;
-  summary: string | null;
-  kind: "original" | "revision";
-};
-
 const COPY: Record<string, string> = {
   "invalid-edit": "That edit request could not be accepted.",
-  "unsupported-edit": "That change is outside the edits this draft can make.",
+  "unsupported-edit": "That change is outside this editor. Try shortening the language, clarifying consequences, rewording choices or adding one decision.",
   "stale-version": "A newer revision is already the current draft.",
-  "review-required": "This request needs a person to review it before the draft can change.",
+  "review-required": "This change involves high-risk material and cannot be made in this workflow. Keep the current draft or request a different ordinary-content change.",
   "invalid-experience": "The revised draft did not pass validation, so the current draft was left unchanged.",
   "generation-unavailable": "AI editing is not configured.",
   "budget-unavailable": "Editing spend is not authorized, so no model call was made.",
@@ -29,6 +21,31 @@ const COPY: Record<string, string> = {
   "cross-workspace": "That experience belongs to another workspace.",
   unauthenticated: "Sign in to edit this private draft.",
   transient: "The edit could not be completed. You can try again.",
+};
+
+const FIXTURE_EDITS = [
+  { label: "Shorten the introduction", instruction: "Shorten the introduction but keep the learning objective." },
+  { label: "Simplify the dialogue", instruction: "Simplify the dialogue." },
+  { label: "Clarify wrong-choice feedback", instruction: "Explain a wrong choice before the draft ends." },
+  { label: "Reword the choices", instruction: "Reword the choices." },
+] as const;
+
+export type ExperienceEditorProps = {
+  versionId: string;
+  isCurrent: boolean;
+  isProposal: boolean;
+  discarded: boolean;
+  editJobId: string | null;
+  baseVersionId: string | null;
+  summary: string | null;
+  uncertainty: string | null;
+  reviewNote: string | null;
+  fixture: boolean;
+  configured: boolean;
+  freeMode?: boolean;
+  proposed: ExperienceManifest;
+  original: ExperienceManifest | null;
+  currentVersionId: string | null;
 };
 
 export function ExperienceEditor({
@@ -46,28 +63,10 @@ export function ExperienceEditor({
   freeMode = false,
   proposed,
   original,
-  history,
   currentVersionId,
-}: {
-  versionId: string;
-  isCurrent: boolean;
-  isProposal: boolean;
-  discarded: boolean;
-  editJobId: string | null;
-  baseVersionId: string | null;
-  summary: string | null;
-  uncertainty: string | null;
-  reviewNote: string | null;
-  fixture: boolean;
-  configured: boolean;
-  freeMode?: boolean;
-  proposed: ExperienceManifest;
-  original: ExperienceManifest | null;
-  history: HistoryItem[];
-  currentVersionId: string | null;
-}) {
+}: ExperienceEditorProps) {
   const router = useRouter();
-  const key = useRef<string | null>(null);
+  const key = useRef<{ instruction: string; value: string } | null>(null);
   const [instruction, setInstruction] = useState("");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
@@ -77,9 +76,9 @@ export function ExperienceEditor({
   const [proposalSummary, setProposalSummary] = useState<string | null>(null);
   const [showing, setShowing] = useState<"proposed" | "original">("proposed");
 
-  async function propose() {
-    const idempotencyKey = key.current ?? crypto.randomUUID();
-    key.current = idempotencyKey;
+  async function propose(requestedInstruction = instruction) {
+    const idempotencyKey = key.current?.instruction === requestedInstruction ? key.current.value : crypto.randomUUID();
+    key.current = { instruction: requestedInstruction, value: idempotencyKey };
     setBusy(true);
     setError("");
     setAlternatives([]);
@@ -91,7 +90,7 @@ export function ExperienceEditor({
         body: JSON.stringify({
           baseVersionId: versionId,
           expectedBaseVersionId: versionId,
-          instruction,
+          instruction: requestedInstruction,
           idempotencyKey,
           editPolicyVersion: "1",
           authorizeEdit: true,
@@ -185,7 +184,20 @@ export function ExperienceEditor({
           {currentVersionId ? <> <Link href={`/creator/preview/${currentVersionId}`}>Open the current draft</Link></> : null}
         </p>
       ) : null}
-      {isCurrent ? (
+      {isCurrent && fixture ? (
+        <div className={styles.form} aria-busy={busy}>
+          <h3>Choose a supported quick edit</h3>
+          <p className={styles.note}>The development fixture can make only these bounded changes. It does not call a live AI model.</p>
+          <div className={editorStyles.quickEdits}>
+            {FIXTURE_EDITS.map((edit) => (
+              <button key={edit.instruction} className={styles.secondary} type="button" disabled={busy} onClick={() => void propose(edit.instruction)}>
+                {edit.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      ) : null}
+      {isCurrent && configured ? (
         <form
           className={styles.form}
           aria-busy={busy}
@@ -194,7 +206,7 @@ export function ExperienceEditor({
             void propose();
           }}
         >
-          <label htmlFor="edit-instruction">Describe the change</label>
+          <label htmlFor="edit-instruction">Describe a bounded change</label>
           <textarea
             id="edit-instruction"
             value={instruction}
@@ -206,15 +218,14 @@ export function ExperienceEditor({
             }}
           />
           <p className={styles.note}>
-            Proposing a change can use AI credits when a live model is configured.
-            {fixture ? " This editor is using the local fixture, so this request is not a live model call and is not billed." : ""}
+            You can shorten or simplify language, clarify consequences, reword choices or add one decision. Source facts, the learning objective, publishing and executable content cannot be changed here. Proposing a change can use AI credits.
             {freeMode ? " This development server is in free-development mode. A confirmed Free plan is required, and the request is not recorded as paid spend." : ""}
-            {configured ? " This server can call the configured model. The result still has to pass the draft checks before you can accept it." : ""}
-            {!fixture && !configured ? " AI editing is not configured on this server." : ""}
+            {" The result must pass draft checks before you can accept it."}
           </p>
           <button className={styles.secondary} type="submit" disabled={busy}>Propose changes</button>
         </form>
       ) : null}
+      {isCurrent && !fixture && !configured ? <p className={styles.note}>Editing is not configured on this server.</p> : null}
       {proposalSummary ? <p className={styles.note}>{proposalSummary}</p> : null}
       {proposalPath ? <p className={styles.note}><Link href={proposalPath}>Open the proposed draft</Link></p> : null}
       {message ? <p className={styles.pending} role="status" aria-live="polite">{message}</p> : null}
@@ -225,21 +236,6 @@ export function ExperienceEditor({
           <ul>{alternatives.map((item) => <li key={item}>{item}</li>)}</ul>
         </div>
       ) : null}
-      <nav aria-label="Revision history">
-        <h3 className={styles.subhead}>Revision history</h3>
-        {history.length === 0 ? <p className={styles.note}>No revisions yet.</p> : (
-          <ul>
-            {history.map((item) => (
-              <li key={item.id}>
-                <Link href={`/creator/preview/${item.id}`} aria-current={item.id === versionId ? "page" : undefined}>
-                  {item.current ? "Current draft" : item.kind === "original" ? "Original draft" : "Proposed revision"}: {item.title}
-                </Link>
-                {item.summary ? <p className={styles.note}>{item.summary}</p> : null}
-              </li>
-            ))}
-          </ul>
-        )}
-      </nav>
     </section>
   );
 }

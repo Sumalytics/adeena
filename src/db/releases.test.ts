@@ -46,7 +46,7 @@ describe("public releases on an isolated database", () => {
     await Promise.all(roots.map((root) => rm(root, { recursive: true, force: true })));
   });
 
-  async function fixture(rights: "cleared" | "unverified" = "cleared") {
+  async function fixture(rights: "cleared" | "unverified" = "cleared", permissionDeclared = true) {
     const userId = randomUUID();
     const identity = issueIdentityForIsolatedTests(userId);
     const workspaceId = randomUUID();
@@ -73,8 +73,8 @@ describe("public releases on an isolated database", () => {
     const generated = await createPlayableExperience({ ...actor, documentVersionId, topicCandidateId, audienceLabel: "Primary learners", ageBand: "8-10", idempotencyKey: randomUUID(), authorizeGeneration: true, provider: "deterministic-fixture" });
     if (!generated.experienceVersionId) throw new Error("fixture version missing");
     const versionId = generated.experienceVersionId;
-    const approval = { experienceVersionId: versionId, decision: "approved", contentReviewed: true, privacy: "no-identifiable-learner", unresolvedHighRisk: false, note: "Reviewed the complete playable version and its source support." };
-    return { ...actor, userId, documentVersionId, topicCandidateId, versionId, jobId: generated.jobId, body: { experienceVersionId: versionId, approval } };
+    if (!permissionDeclared) await admin`delete from source_permission_declarations where document_version_id = ${documentVersionId}`;
+    return { ...actor, userId, documentVersionId, topicCandidateId, versionId, jobId: generated.jobId, body: { experienceVersionId: versionId } };
   }
 
   it("publishes one reviewed fixed version; guests play without identity or model calls", async () => {
@@ -101,7 +101,14 @@ describe("public releases on an isolated database", () => {
       const [stored] = await admin`select published_by::text, published_at, approval_evidence from experience_releases where id = ${first.releaseId}`;
       expect(stored.published_by).toBe(room.userId);
       expect(stored.published_at).toBeTruthy();
-      expect(stored.approval_evidence).toEqual(room.body.approval);
+      expect(stored.approval_evidence).toEqual({
+        mode: "creator-declared-mvp",
+        experienceVersionId: room.versionId,
+        sourceAuthorizationGatePassed: true,
+        contentApprovalRecorded: false,
+        initiatedBy: "share-action",
+        policyVersion: "mvp-share-v1",
+      });
       const [version] = await admin`select publication_status, source_span_ids from experience_versions where id = ${room.versionId}`;
       expect(version.publication_status).toBe("unpublished");
       expect(version.source_span_ids.length).toBeGreaterThan(0);
@@ -111,19 +118,21 @@ describe("public releases on an isolated database", () => {
     } finally { network.mockRestore(); }
   });
 
-  it("requires explicit matching approval and denies unresolved reviews and unverified rights", async () => {
+  it("requires a deliberate version, accepts declared unverified rights, and preserves safety gates", async () => {
     const room = await fixture();
-    await expect(publishRelease({ ...room, body: { experienceVersionId: room.versionId } })).rejects.toMatchObject({ code: "invalid-publication" });
-    for (const change of [{ experienceVersionId: randomUUID() }, { decision: "pending" }, { unresolvedHighRisk: true }, { privacy: "review-required" }, { note: "" }]) {
-      await expect(publishRelease({ ...room, body: { ...room.body, approval: { ...room.body.approval, ...change } } })).rejects.toMatchObject({ code: "invalid-publication" });
-    }
+    await expect(publishRelease({ ...room, body: {} })).rejects.toMatchObject({ code: "invalid-publication" });
+    await expect(publishRelease({ ...room, body: { ...room.body, approval: {} } })).rejects.toMatchObject({ code: "invalid-publication" });
     const unverified = await fixture("unverified");
-    // Even falsely marking the job ready cannot clear the source's independent rights gate.
-    await admin`update experience_generation_jobs set review_status = 'ready-for-review' where id = ${unverified.jobId}`;
-    await expect(publishRelease(unverified)).rejects.toMatchObject({ code: "publication-denied" });
+    expect((await publicationStatus({ ...unverified, versionId: unverified.versionId })).eligible).toBe(true);
+    const [source] = await admin`select rights_status from source_document_versions where id = ${unverified.documentVersionId}`;
+    expect(source.rights_status).toBe("unverified");
+    const undeclared = await fixture("unverified", false);
+    expect((await publicationStatus({ ...undeclared, versionId: undeclared.versionId })).blocks).toContain("permission-declaration-required");
+    await expect(publishRelease(undeclared)).rejects.toMatchObject({ code: "publication-denied" });
     await admin`update experience_generation_jobs set review_status = 'review-required' where id = ${room.jobId}`;
-    await expect(publishRelease(room)).rejects.toMatchObject({ code: "publication-denied" });
-    await admin`update experience_generation_jobs set review_status = 'ready-for-review' where id = ${room.jobId}`;
+    expect((await publicationStatus({ ...room, versionId: room.versionId })).eligible).toBe(true);
+    await admin`update recommendation_runs set reasons = '["sensitive-domain"]'::jsonb where document_version_id = ${room.documentVersionId}`;
+    expect((await publicationStatus({ ...room, versionId: room.versionId })).eligible).toBe(true);
     await admin`update topic_candidates set reasons = '["sensitive-domain"]'::jsonb where id = ${room.topicCandidateId}`;
     await expect(publishRelease(room)).rejects.toMatchObject({ code: "publication-denied" });
     await admin`update topic_candidates set reasons = '[]'::jsonb where id = ${room.topicCandidateId}`;
@@ -170,7 +179,7 @@ describe("public releases on an isolated database", () => {
     await admin`insert into experience_validation_results select (jsonb_populate_record(null::experience_validation_results,
       to_jsonb(r) || ${JSON.stringify({ id: randomUUID(), job_id: jobId, experience_version_id: versionId })}::text::jsonb)).*
       from experience_validation_results r where experience_version_id = ${room.versionId}`;
-    await expect(publishRelease({ ...room, body: { experienceVersionId: versionId, approval: { ...room.body.approval, experienceVersionId: versionId } } })).rejects.toMatchObject({ code: "publication-denied" });
+    await expect(publishRelease({ ...room, body: { experienceVersionId: versionId } })).rejects.toMatchObject({ code: "publication-denied" });
   });
 
   it("revokes durably and cannot republish the same release or expose drafts by id", async () => {
@@ -197,7 +206,7 @@ describe("public releases on an isolated database", () => {
     const edit = await proposeExperienceEdit({ ...room, baseVersionId: room.versionId, expectedBaseVersionId: room.versionId, idempotencyKey: randomUUID(), instruction: "Simplify the dialogue.", authorizeEdit: true, provider: "deterministic-fixture" });
     if (edit.kind !== "ready" || !edit.proposal.proposedVersionId) throw new Error("edit fixture missing");
     const versionId = edit.proposal.proposedVersionId;
-    const body = { experienceVersionId: versionId, approval: { ...room.body.approval, experienceVersionId: versionId } };
+    const body = { experienceVersionId: versionId };
     await expect(publishRelease({ ...room, body })).rejects.toMatchObject({ code: "publication-denied" });
     expect(await readPublicRelease(sql, versionId)).toBeNull();
     await acceptExperienceEdit({ ...room, editJobId: edit.proposal.editJobId, expectedBaseVersionId: room.versionId });
@@ -214,9 +223,9 @@ describe("public releases on an isolated database", () => {
   });
 
   it("records explicit rights evidence without rewriting source and permits ordinary creator publication", async () => {
-    const room = await fixture("unverified");
+    const room = await fixture("unverified", false);
     const before = await publicationStatus({ ...room, versionId: room.versionId });
-    expect(before.blocks).toContain("rights-clearance-required");
+    expect(before.blocks).toContain("permission-declaration-required");
     const body = { experienceVersionId: room.versionId, basis: "creator-owned", evidence: "I authored this water passage and permit its public adaptation.", permitsPublicAdaptation: true };
     await expect(clearSourceRights({ ...room, body: { ...body, permitsPublicAdaptation: false } })).rejects.toMatchObject({ code: "invalid-publication" });
     const other = await fixture();
@@ -244,13 +253,14 @@ describe("public releases on an isolated database", () => {
     await expect(publishRelease(room)).rejects.toMatchObject({ code: "publication-denied" });
   });
 
-  it("accepts a licence record but does not override independent edit review", async () => {
-    const room = await fixture("unverified");
+  it("accepts an eligible accepted edit without a second content approval", async () => {
+    const room = await fixture("unverified", false);
     await clearSourceRights({ ...room, body: { experienceVersionId: room.versionId, basis: "licensed", evidence: "Written licence from the author permits public adaptation and sharing.", permitsPublicAdaptation: true } });
     const edit = await proposeExperienceEdit({ ...room, baseVersionId: room.versionId, expectedBaseVersionId: room.versionId, idempotencyKey: randomUUID(), instruction: "Simplify the dialogue.", authorizeEdit: true, provider: "deterministic-fixture" });
     if (edit.kind !== "ready" || !edit.proposal.proposedVersionId) throw new Error("edit missing");
     await acceptExperienceEdit({ ...room, editJobId: edit.proposal.editJobId, expectedBaseVersionId: room.versionId });
-    expect((await publicationStatus({ ...room, versionId: edit.proposal.proposedVersionId })).blocks).toContain("version-review-required");
+    expect((await publicationStatus({ ...room, versionId: edit.proposal.proposedVersionId })).eligible).toBe(true);
+    expect((await publishRelease({ ...room, body: { experienceVersionId: edit.proposal.proposedVersionId } })).releaseId).toBeTruthy();
   });
 
   it("can reverse and reapply migrations in the disposable database", async () => {

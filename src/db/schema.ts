@@ -1,3 +1,4 @@
+import { sql } from "drizzle-orm";
 import { boolean, integer, jsonb, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
 
 const timestamps = {
@@ -93,6 +94,7 @@ export const sourceSpans = pgTable("source_spans", {
   endOffset: integer("end_offset").notNull(),
   pageNumber: integer("page_number"),
   excerpt: text("excerpt").notNull(),
+  generationExcerpt: text("generation_excerpt"),
 });
 
 export const knowledgeNodes = pgTable("knowledge_nodes", {
@@ -210,4 +212,13 @@ export const sourceRightsClearances = pgTable("source_rights_clearances", {
   permitsPublicAdaptation: boolean("permits_public_adaptation").notNull(),
   recordedBy: uuid("recorded_by").notNull(),
   recordedAt: timestamp("recorded_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
+});
+
+export const sourcePermissionDeclarations = pgTable("source_permission_declarations", {
+  id: uuid("id").primaryKey(),
+  workspaceId: uuid("workspace_id").notNull(),
+  documentVersionId: uuid("document_version_id").notNull(),
+  declaration: text("declaration").notNull(),
+  declaredBy: uuid("declared_by").notNull().default(sql`adeena.current_user_id()`),
+  declaredAt: timestamp("declared_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
 });

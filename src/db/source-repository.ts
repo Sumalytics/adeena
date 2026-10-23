@@ -66,7 +66,7 @@ export async function enqueueDurableSource(input: {
   const contentHash = createHash("sha256").update(input.bytes).digest("hex");
   const filename = displayFilename(input.filename);
   try {
-    return await withWorkspace(input.sql, input.identity, input.workspaceId, async ({ db, userId }) => {
+    return await withWorkspace(input.sql, input.identity, input.workspaceId, async ({ db, tx, userId }) => {
       const existingJob = await db
         .select()
         .from(extractionJobs)
@@ -76,6 +76,11 @@ export async function enqueueDurableSource(input: {
           .select()
           .from(sourceDocumentVersions)
           .where(eq(sourceDocumentVersions.id, existingJob[0].documentVersionId));
+        if (version[0]?.rightsStatus !== "blocked") {
+          await tx`insert into source_permission_declarations (id, workspace_id, document_version_id, declaration)
+            values (${randomUUID()}::uuid, ${input.workspaceId}::uuid, ${version[0].id}::uuid, 'permission-asserted')
+            on conflict (workspace_id, document_version_id, declared_by) do nothing`;
+        }
         return { job: existingJob[0], version: version[0], replayed: true as const };
       }
 
@@ -110,6 +115,9 @@ export async function enqueueDurableSource(input: {
       }
       if (!version) throw new SourceError("integrity-mismatch");
       if (version.rightsStatus === "blocked") throw new SourceError("rights-blocked");
+      await tx`insert into source_permission_declarations (id, workspace_id, document_version_id, declaration)
+        values (${randomUUID()}::uuid, ${input.workspaceId}::uuid, ${version.id}::uuid, 'permission-asserted')
+        on conflict (workspace_id, document_version_id, declared_by) do nothing`;
       const existingForVersion = await db
         .select()
         .from(extractionJobs)
@@ -148,6 +156,25 @@ export async function enqueueDurableSource(input: {
     if (/row-level security|workspace owner/i.test(failure.message)) throw new SourceError("cross-workspace");
     throw failure;
   }
+}
+
+export async function recordSourcePermission(input: {
+  sql: Sql;
+  identity: VerifiedIdentity;
+  workspaceId: string;
+  documentVersionId: string;
+}) {
+  return withWorkspace(input.sql, input.identity, input.workspaceId, async ({ db, tx }) => {
+    const versions = await db.select({ id: sourceDocumentVersions.id, rightsStatus: sourceDocumentVersions.rightsStatus })
+      .from(sourceDocumentVersions)
+      .where(and(eq(sourceDocumentVersions.workspaceId, input.workspaceId), eq(sourceDocumentVersions.id, input.documentVersionId)));
+    if (!versions[0]) throw new SourceError("cross-workspace");
+    if (versions[0].rightsStatus === "blocked") throw new SourceError("rights-blocked");
+    await tx`insert into source_permission_declarations (id, workspace_id, document_version_id, declaration)
+      values (${randomUUID()}::uuid, ${input.workspaceId}::uuid, ${input.documentVersionId}::uuid, 'permission-asserted')
+      on conflict (workspace_id, document_version_id, declared_by) do nothing`;
+    return { recorded: true as const, documentVersionId: input.documentVersionId };
+  });
 }
 
 export async function readSourceVersion(sql: Sql, identity: VerifiedIdentity, workspaceId: string, versionId: string) {

@@ -27,11 +27,19 @@ export async function publishRelease(input: Actor & { body: unknown }) {
     const id = randomUUID();
     const manifest = publicReleaseManifest(version.manifest, id);
     if (!simulateExperience(manifest).ok) throw new ReleaseError("publication-denied");
+    const auditEvidence = {
+      mode: "creator-declared-mvp",
+      experienceVersionId: versionId,
+      sourceAuthorizationGatePassed: true,
+      contentApprovalRecorded: false,
+      initiatedBy: "share-action",
+      policyVersion: "mvp-share-v1",
+    } as const;
     try {
       const created = await tx<{ id: string }[]>`
         insert into experience_releases (id, workspace_id, experience_version_id, published_by, approval_evidence, public_manifest)
         values (${id}::uuid, ${input.workspaceId}::uuid, ${versionId}::uuid, ${userId}::uuid,
-          ${JSON.stringify(parsed.data.approval)}::jsonb, ${JSON.stringify(manifest)}::jsonb)
+          ${JSON.stringify(auditEvidence)}::jsonb, ${JSON.stringify(manifest)}::jsonb)
         on conflict (workspace_id, experience_version_id) do nothing
         returning id::text
       `;
@@ -105,11 +113,13 @@ export async function publicationStatus(input: Actor & { versionId: string }) {
   if (!Uuid.safeParse(input.versionId).success) throw new ReleaseError("invalid-publication");
   return withWorkspace(input.sql, input.identity, input.workspaceId, async ({ tx }) => {
     const [version] = await tx`select v.manifest, d.original_filename, d.rights_status,
-      adeena.is_owner(v.workspace_id) as owner, c.basis, c.recorded_at,
+      c.basis, c.recorded_at, p.declared_at,
       adeena.publication_blocks(v.id) as blocks
       from experience_versions v
       join source_document_versions d on d.id = v.document_version_id and d.workspace_id = v.workspace_id
       left join source_rights_clearances c on c.document_version_id = d.id and c.workspace_id = d.workspace_id
+      left join source_permission_declarations p on p.document_version_id = d.id and p.workspace_id = d.workspace_id
+        and p.declared_by = adeena.current_user_id()
       where v.id = ${input.versionId}::uuid and v.workspace_id = ${input.workspaceId}::uuid`;
     if (!version) throw new ReleaseError("publication-denied");
     const blocks = [...version.blocks] as string[];
@@ -122,7 +132,8 @@ export async function publicationStatus(input: Actor & { versionId: string }) {
     return {
       versionId: input.versionId, eligible: blocks.length === 0, blocks: [...new Set(blocks)],
       sourceName: version.original_filename as string,
-      canClearRights: version.owner === true && version.rights_status === "unverified" && !version.basis,
+      permissionBasis: version.rights_status === "cleared" ? "verified" : version.basis ? "legacy-clearance" : version.declared_at ? "upload-declaration" : null,
+      permissionRecordedAt: version.declared_at ?? version.recorded_at ?? null,
       rightsBasis: version.basis as string | null,
       rightsRecordedAt: version.recorded_at ?? null,
       release: release ? { releaseId: release.id as string, playPath: `/play/r/${release.id}`, revoked: Boolean(release.revoked_at) } : null,

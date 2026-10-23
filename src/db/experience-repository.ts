@@ -367,7 +367,7 @@ async function loadSource(workspace: AuthorizedWorkspace, input: {
   `;
   if (latest[0]?.id !== candidate.extraction_id) throw new SourceError("stale-extraction");
   const spanRows = await workspace.tx<{ id: string; excerpt: string }[]>`
-    select id::text, excerpt from source_spans
+    select id::text, coalesce(generation_excerpt, excerpt) as excerpt from source_spans
     where workspace_id = ${workspace.workspaceId}::uuid and document_version_id = ${input.documentVersionId}::uuid
   `;
   const wanted = strings(candidate.source_span_ids);

@@ -3,7 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import type { TopicRecommendationView } from "@/topic/public";
 import { WorkflowEditor } from "./workflow-editor";
-import { topicGenerationGate, topicSavePlan, workflowUpdateFailure, type CreatorWorkflowView } from "./workflow-state";
+import { topicGenerationGate, topicRecommendationFailureCopy, topicSavePlan, workflowUpdateFailure, type CreatorWorkflowView } from "./workflow-state";
 
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push() {}, refresh() {} }),
@@ -60,6 +60,22 @@ const recommendation = {
 } as TopicRecommendationView;
 
 describe("creator workflow screen", () => {
+  it("shows only the first required stage for a new experience", () => {
+    const html = renderToStaticMarkup(
+      <WorkflowEditor
+        workflow={{ ...workflow, version: 1, documentVersionId: null, audienceLabel: null, ageBand: null, selectedTopicCandidateId: null }}
+        sources={[]}
+        recommendation={null}
+      />,
+    );
+    expect(html).toContain("Step 1 of 4");
+    expect(html).toContain("Add your content");
+    expect(html).toContain("Upload new content");
+    expect(html).not.toContain("Who will play?");
+    expect(html).not.toContain("What should the game teach?");
+    expect(html).not.toContain("Create your playable game");
+  });
+
   it("restores the saved topic and does not start generation", () => {
     const html = renderToStaticMarkup(
       <WorkflowEditor
@@ -69,16 +85,17 @@ describe("creator workflow screen", () => {
           filename: "rivers.md",
           extractionStatus: "complete",
           rightsStatus: "unverified",
+          permissionDeclared: true,
           byteCount: 128,
         }]}
         recommendation={recommendation}
       />,
     );
-    expect(html).toContain("Selected topic: Rivers");
-    expect(html).toContain("Create playable experience");
-    expect(html).toContain("Development fixture");
-    expect(html).toContain("not live AI generation");
-    expect(html).toContain("Open a private preview to review, approve and share an eligible version.");
+    expect(html).toContain("Your choices");
+    expect(html).toContain("Rivers");
+    expect(html).toContain("Generate my experience");
+    expect(html).toContain("deterministic fixture");
+    expect(html).toContain("Step 4 of 4");
     expect(html).toContain("rivers.md");
     expect(html).not.toContain("/api/creator/experiences");
     const source = readFileSync("src/app/creator/workflow-editor.tsx", "utf8");
@@ -101,7 +118,8 @@ describe("creator workflow screen", () => {
         }}
       />,
     );
-    expect(html).toContain("Your experience is ready.");
+    expect(html).toContain("Your game is ready");
+    expect(html).toContain("Play your private draft");
     expect(html).toContain("/creator/preview/77777777-7777-4777-8777-777777777777");
   });
 
@@ -134,8 +152,17 @@ describe("creator workflow screen", () => {
         },
       ],
     };
-    const html = renderToStaticMarkup(<WorkflowEditor workflow={workflow} sources={[]} recommendation={mixed} />);
-    expect(html).toContain("Create playable experience");
+    const html = renderToStaticMarkup(<WorkflowEditor workflow={{ ...workflow, selectedTopicCandidateId: null }} sources={[{
+      documentVersionId: workflow.documentVersionId ?? "",
+      filename: "rivers.md",
+      extractionStatus: "complete",
+      rightsStatus: "unverified",
+      permissionDeclared: true,
+      byteCount: 128,
+    }]} recommendation={mixed} />);
+    expect(html).toContain("Suggested topic");
+    expect(html).toContain("Use this topic");
+    expect(html).toContain("Choose a different topic");
     expect(html).toContain("high-risk material");
     expect(html).toContain("Choose a different eligible topic");
     expect(html).not.toContain("A person needs to review them first");
@@ -149,5 +176,20 @@ describe("creator workflow screen", () => {
       allowed: false,
       message: "This topic does not have enough source support. Choose a fuller section or upload a more complete source.",
     });
+  });
+
+  it("returns a pending saved source to processing instead of enabling topic work", () => {
+    const html = renderToStaticMarkup(<WorkflowEditor workflow={{ ...workflow, selectedTopicCandidateId: null }} sources={[{
+      documentVersionId: workflow.documentVersionId ?? "",
+      filename: "still-processing.md",
+      extractionStatus: "pending",
+      rightsStatus: "unverified",
+      permissionDeclared: true,
+      byteCount: 128,
+    }]} recommendation={null} />);
+    expect(html).toContain("Add your content");
+    expect(html).toContain("Continue processing");
+    expect(html).not.toContain("Suggest a topic");
+    expect(topicRecommendationFailureCopy("invalid-topic")).toContain("finish processing");
   });
 });

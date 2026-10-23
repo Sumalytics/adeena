@@ -6,6 +6,7 @@ export type ExtractedSourceSummary = {
   filename: string;
   extractionStatus: "complete" | "partial" | "failed" | "pending";
   rightsStatus: "unverified" | "cleared" | "blocked";
+  permissionDeclared: boolean;
   byteCount: number;
 };
 

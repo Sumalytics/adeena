@@ -48,11 +48,12 @@ export function PlayerScreen({
   }
 
   if (view.kind === "cover") {
+    const Visual = renderer.Visual;
     return (
       <main id="content" className={styles.shell} lang={view.locale} data-renderer={renderer.kind}>
         <h1 className={styles.title}>{view.title}</h1>
+        <Visual sceneId="cover" title={view.title} description={view.intro} decorative missing={false} choices={[]} variables={{}} completed={false} revision={0} />
         <p className={styles.intro}>{view.intro}</p>
-        <MeterList meters={view.meters} />
         <button type="button" className={styles.begin} onClick={onBegin}>
           Begin
         </button>

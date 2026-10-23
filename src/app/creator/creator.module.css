@@ -24,6 +24,280 @@
   line-height: 1.05;
 }
 
+.launch,
+.currentStage {
+  margin-top: 2rem;
+  padding: clamp(1.25rem, 4vw, 2rem);
+  border: 1px solid var(--line);
+  border-radius: 1.25rem;
+  background: white;
+  box-shadow: 0 1rem 3rem rgb(13 70 52 / 0.07);
+}
+
+.launch h2,
+.currentStage h2,
+.savedSummary h2,
+.savedWork h2 {
+  margin: 0;
+  color: var(--forest-deep);
+  font-family: var(--adeena-font-display);
+  font-size: clamp(1.5rem, 5vw, 2rem);
+  line-height: 1.15;
+}
+
+.launch > p:not(.eyebrow),
+.currentStage > p:not(.eyebrow) {
+  max-width: 38rem;
+  line-height: 1.5;
+}
+
+.eyebrow {
+  margin: 0 0 0.45rem;
+  color: var(--forest);
+  font-size: 0.78rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.launch .primary {
+  margin-top: 1.25rem;
+  padding: 0;
+  border: 0;
+}
+
+.savedWork {
+  margin-top: 1.25rem;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+
+.savedWork > summary {
+  min-height: 3.5rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  color: var(--forest-deep);
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.savedWork > summary span {
+  display: inline-grid;
+  place-items: center;
+  min-width: 1.75rem;
+  min-height: 1.75rem;
+  border-radius: 999px;
+  background: var(--surface);
+  font-size: 0.8rem;
+}
+
+.savedWork > section {
+  margin: 0.75rem 0 1.5rem;
+}
+
+.savedWork h2 {
+  margin-bottom: 0.75rem;
+  font-size: 1.25rem;
+}
+
+.progress {
+  margin-top: 1.5rem;
+  color: var(--forest-deep);
+  font-size: 0.85rem;
+  font-weight: 800;
+}
+
+.progressTrack {
+  height: 0.35rem;
+  margin-top: 0.5rem;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--line);
+}
+
+.progressTrack span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--orange);
+}
+
+.savedSummary {
+  margin-top: 1.25rem;
+  padding: 1rem;
+  border: 1px solid var(--line);
+  border-radius: 0.9rem;
+  background: var(--surface);
+}
+
+.savedSummary h2 {
+  font-size: 1rem;
+}
+
+.savedSummary dl {
+  display: grid;
+  gap: 0;
+  margin: 0.5rem 0 0;
+}
+
+.savedSummary dl > div {
+  display: grid;
+  grid-template-columns: 5rem minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.75rem;
+  min-height: 2.75rem;
+  border-top: 1px solid var(--line);
+}
+
+.savedSummary dt {
+  color: var(--ink);
+  font-size: 0.8rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.savedSummary dd {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.savedSummary button {
+  min-height: 2.75rem;
+  border: 0;
+  background: transparent;
+  color: var(--forest-deep);
+  font: inherit;
+  font-weight: 800;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.currentStage:focus {
+  outline: none;
+}
+
+.compactFields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+
+.sourcePicker {
+  margin-top: 1.5rem;
+}
+
+.permissionCheck {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.7rem;
+  max-width: 42rem;
+  line-height: 1.45;
+}
+
+.permissionCheck input {
+  inline-size: 1.2rem;
+  block-size: 1.2rem;
+  margin-block-start: 0.15rem;
+  flex: 0 0 auto;
+}
+
+.uploadPanel {
+  padding: 1rem;
+  border: 1px solid var(--line);
+  border-radius: 1rem;
+  background: var(--surface);
+}
+
+.uploadSurface {
+  display: grid;
+  place-items: center;
+  gap: 0.35rem;
+  min-height: 8.5rem;
+  padding: 1.25rem;
+  border: 2px dashed var(--forest);
+  border-radius: 0.9rem;
+  background: white;
+  color: var(--forest-deep);
+  text-align: center;
+  cursor: pointer;
+}
+
+.uploadSurface span {
+  color: var(--ink);
+  font-size: 0.85rem;
+  font-weight: 400;
+}
+
+.uploadSurface input {
+  width: 100%;
+  max-width: 22rem;
+  min-height: 2.75rem;
+  margin-top: 0.6rem;
+  font: inherit;
+}
+
+.topicFieldset {
+  min-inline-size: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.topicFieldset legend {
+  margin-bottom: 0.6rem;
+  color: var(--forest-deep);
+  font-weight: 800;
+}
+
+.topicCard {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.8rem;
+  min-height: 3.5rem;
+  padding: 1rem;
+  border: 1px solid var(--line);
+  border-radius: 0.9rem;
+  background: white;
+  cursor: pointer;
+}
+
+.topicCard[data-selected="true"] {
+  border-color: var(--forest);
+  box-shadow: inset 0 0 0 1px var(--forest);
+}
+
+.topicCard input {
+  flex: 0 0 auto;
+  width: 1.25rem;
+  height: 1.25rem;
+  margin-top: 0.1rem;
+}
+
+.topicCard span,
+.topicCard small {
+  display: block;
+}
+
+.topicCard small {
+  margin-top: 0.35rem;
+  color: var(--ink);
+  line-height: 1.4;
+}
+
+.alternatives {
+  display: grid;
+  gap: 0.65rem;
+  margin-top: 0.5rem;
+}
+
+.footerLink {
+  margin-top: 1.5rem;
+  text-align: center;
+}
+
 .promise {
   max-width: 38rem;
   margin: 1rem 0 0;
@@ -159,6 +433,13 @@
   cursor: pointer;
 }
 
+.draftLink {
+  border: 0;
+  background: var(--forest);
+  color: white;
+  font-weight: 700;
+}
+
 .secondary {
   border: 1px solid var(--forest);
   background: transparent;
@@ -176,8 +457,12 @@
 .button:focus-visible,
 .secondary:focus-visible,
 .draftLink:focus-visible,
+.savedSummary button:focus-visible,
+.savedWork summary:focus-visible,
 .field input:focus-visible,
 .field select:focus-visible,
+.uploadSurface:focus-within,
+.topicCard:focus-within,
 .sourceChoice input:focus-visible,
 .sourceCard input:focus-visible,
 .disclosure summary:focus-visible {
@@ -333,6 +618,20 @@ fieldset.cards {
 
   .actions {
     display: grid;
+  }
+
+  .compactFields {
+    grid-template-columns: 1fr;
+  }
+
+  .savedSummary dl > div {
+    grid-template-columns: 4.25rem minmax(0, 1fr) auto;
+    gap: 0.45rem;
+    padding: 0.4rem 0;
+  }
+
+  .savedSummary button {
+    padding: 0;
   }
 
   .button,

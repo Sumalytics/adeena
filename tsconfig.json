@@ -38,7 +38,9 @@
     ".local/share-demo/next/types/**/*.ts",
     ".local/share-demo/next/dev/types/**/*.ts",
     ".local/share-build/types/**/*.ts",
-    ".local/share-build/dev/types/**/*.ts"
+    ".local/share-build/dev/types/**/*.ts",
+    ".local/p0c-next/types/**/*.ts",
+    ".local/p0c-next/dev/types/**/*.ts"
   ],
   "exclude": [
     "node_modules",

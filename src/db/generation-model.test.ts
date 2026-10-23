@@ -41,8 +41,10 @@ describe("durable model generation", () => {
     const actor = { sql, identity, workspaceId };
     const store = createFilesystemObjectStore(root);
     const { source, plan } = specimen();
-    const uploaded = await enqueueDurableSource({ ...actor, filename: "garden.md", bytes: Buffer.from(`# Rain garden\n\n## Routes\n\n${source.spans[0].excerpt} ${source.spans[0].excerpt}`), store, idempotencyKey: randomUUID() });
+    const uploaded = await enqueueDurableSource({ ...actor, filename: "garden.md", bytes: Buffer.from(`# Rain garden\n\n## Routes\n\n${source.spans[0].excerpt} ${source.spans[0].excerpt} ${source.spans[0].excerpt}`), store, idempotencyKey: randomUUID() });
     await runExtractionOnce({ ...actor, store, leaseOwner: "model-test" });
+    const [excerptCapacity] = await admin`select max(char_length(generation_excerpt))::int as length from source_spans where document_version_id=${uploaded.version.id}::uuid`;
+    expect(Number(excerptCapacity.length)).toBeGreaterThan(280);
     const documentVersionId = uploaded.version.id;
     const recommended = await recommendFirstTopic({ ...actor, documentVersionId, audienceLabel: "Primary learners", ageBand: "8-10", idempotencyKey: randomUUID() });
     const topicCandidateId = recommended.recommendation!.topicCandidateId;

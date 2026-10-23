@@ -15,6 +15,7 @@ import {
   knowledgeNodes,
   recommendationRuns,
   sourceDocumentVersions,
+  sourcePermissionDeclarations,
   sourceSpans,
   topicCandidates,
   topicOverrides,
@@ -141,7 +142,7 @@ function present(run: RunRow, rows: CandidateRow[], offset: number, replayed: bo
 }
 
 export async function listExtractedSources(sql: Sql, identity: VerifiedIdentity, workspaceId: string) {
-  return withWorkspace(sql, identity, workspaceId, async ({ db }) => {
+  return withWorkspace(sql, identity, workspaceId, async ({ db, userId }) => {
     const versions = await db
       .select()
       .from(sourceDocumentVersions)
@@ -153,6 +154,10 @@ export async function listExtractedSources(sql: Sql, identity: VerifiedIdentity,
       .from(extractionResults)
       .where(eq(extractionResults.workspaceId, workspaceId));
     const statusByVersion = new Map(results.map((row) => [row.documentVersionId, row.status]));
+    const permissions = await db.select({ documentVersionId: sourcePermissionDeclarations.documentVersionId })
+      .from(sourcePermissionDeclarations)
+      .where(and(eq(sourcePermissionDeclarations.workspaceId, workspaceId), eq(sourcePermissionDeclarations.declaredBy, userId)));
+    const declaredVersions = new Set(permissions.map((row) => row.documentVersionId));
     return versions.map((version): ExtractedSourceSummary => {
       const status = statusByVersion.get(version.id);
       const rights = version.rightsStatus;
@@ -161,6 +166,7 @@ export async function listExtractedSources(sql: Sql, identity: VerifiedIdentity,
         filename: version.originalFilename,
         extractionStatus: status === "complete" || status === "partial" || status === "failed" ? status : "pending",
         rightsStatus: rights === "cleared" || rights === "blocked" ? rights : "unverified",
+        permissionDeclared: rights === "cleared" || declaredVersions.has(version.id),
         byteCount: version.sizeBytes,
       };
     });

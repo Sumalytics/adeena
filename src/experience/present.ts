@@ -8,15 +8,10 @@ export function draftPresentation(manifest: ExperienceManifest, notice: string):
   }
   return {
     intro: notice,
-    variables: manifest.state.variables.map((variable) => ({
-      id: variable.id,
-      label: variable.id === "understanding" ? "Source use" : "Progress",
-      changeText(before, after) {
-        if (after === before) return "The source note stayed as it was.";
-        if (after > before) return "You used more of the source note.";
-        return "You left the source note.";
-      },
-    })),
+    // The compiler's internal state supports branching and simulation. It is
+    // not presented as a learning score; learner-visible consequences come
+    // from the authored scenes and choice history.
+    variables: [],
     scenes,
   };
 }

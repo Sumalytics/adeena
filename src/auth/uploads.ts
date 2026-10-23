@@ -3,7 +3,7 @@ import type { Sql } from "postgres";
 import { Uuid } from "@/contracts/common";
 import { ensureIndividualWorkspace } from "@/db/creator";
 import type { VerifiedIdentity } from "@/db/identity";
-import { enqueueDurableSource, readVersionProcessing, storeBlockedDocument } from "@/db/source-repository";
+import { enqueueDurableSource, readVersionProcessing, recordSourcePermission, storeBlockedDocument } from "@/db/source-repository";
 import { listExtractedSources } from "@/db/topic-repository";
 import { runExtractionOnce } from "@/db/worker";
 import { SourceError } from "@/source/errors";
@@ -19,6 +19,7 @@ const FIELDS = new Set(["source", "rightsDeclaration", "idempotencyKey"]);
 const RightsDeclaration = z.enum(["permission-asserted", "blocked"]);
 
 const ContinueBody = z.object({ documentVersionId: Uuid }).strict();
+const PermissionBody = z.object({ documentVersionId: Uuid, declaration: z.literal("permission-asserted") }).strict();
 
 function failure(error: unknown) {
   if (!(error instanceof SourceError)) throw error;
@@ -256,6 +257,28 @@ export async function creatorSourceResponse(input: {
     const match = sources.find((source) => source.documentVersionId === parsed.data);
     if (!match) return { status: 403 as const, body: { error: "cross-workspace" } };
     return { status: 200 as const, body: { source: match, aiGenerationAuthorized: false as const } };
+  } catch (error) {
+    return failure(error);
+  }
+}
+
+export async function creatorSourcePermissionResponse(input: {
+  session: CreatorSession | null;
+  sql: Sql;
+  body: unknown;
+}) {
+  if (!input.session) return { status: 401 as const, body: { error: "unauthenticated" } };
+  const parsed = PermissionBody.safeParse(input.body);
+  if (!parsed.success) return { status: 400 as const, body: { error: "invalid-source" } };
+  try {
+    const workspace = await workspaceFor(input.sql, input.session.identity);
+    const recorded = await recordSourcePermission({
+      sql: input.sql,
+      identity: input.session.identity,
+      workspaceId: workspace.workspaceId,
+      documentVersionId: parsed.data.documentVersionId,
+    });
+    return { status: 200 as const, body: recorded };
   } catch (error) {
     return failure(error);
   }

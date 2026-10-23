@@ -55,6 +55,13 @@ export function generationFailureCopy(code: string | null | undefined) {
   return GENERATION_COPY[code] ?? "That experience could not be created.";
 }
 
+export function topicRecommendationFailureCopy(code: string | null | undefined) {
+  if (code === "invalid-topic") return "This content is not ready for a topic yet. Return to content and finish processing it, or choose another extracted file.";
+  if (code === "cross-workspace") return "This content is not available in your workspace. Choose another extracted file.";
+  if (code === "unauthenticated") return "Your session ended. Sign in again, then continue this experience.";
+  return "The topic recommendation could not be prepared. Check that the selected content finished processing and try again.";
+}
+
 export function topicGenerationGate(candidate: TopicCandidateView | undefined) {
   if (!candidate) {
     return { allowed: false, message: "Recommend the topic again, then choose an eligible topic before generation." };

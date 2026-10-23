@@ -24,10 +24,10 @@ function statusLabel(source: ExtractedSourceSummary) {
   return "Processing";
 }
 
-function rightsLabel(status: ExtractedSourceSummary["rightsStatus"]) {
-  if (status === "blocked") return "Rights are blocked";
-  if (status === "cleared") return "Rights cleared";
-  return "Rights not verified";
+function rightsLabel(source: ExtractedSourceSummary) {
+  if (source.rightsStatus === "blocked") return "Rights are blocked";
+  if (source.rightsStatus === "cleared") return "Rights verified";
+  return source.permissionDeclared ? "Creator permission declared" : "Permission declaration needed";
 }
 
 function usableSource(source: ExtractedSourceSummary) {
@@ -49,9 +49,7 @@ export function SourceUpload({
   const [error, setError] = useState("");
   const [result, setResult] = useState<CreatorUploadView | null>(null);
   const waiting = sources.some((source) => source.extractionStatus === "pending" && source.rightsStatus !== "blocked");
-  const extracted = sources.some((source) => source.extractionStatus === "complete" || source.extractionStatus === "partial");
-  const formOpen = sources.length === 0 || (!waiting && !extracted);
-  const uploadClass = selection && sources.some(usableSource) ? styles.secondary : styles.button;
+  const uploadClass = selection?.value && sources.some(usableSource) ? styles.secondary : styles.button;
 
   async function upload(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -67,6 +65,9 @@ export function SourceUpload({
         return;
       }
       setResult(body);
+      if (body.extractionStatus === "complete" || body.extractionStatus === "partial") {
+        selection?.onChange(body.documentVersionId);
+      }
       key.current = crypto.randomUUID();
       router.refresh();
     } catch {
@@ -101,8 +102,9 @@ export function SourceUpload({
 
   const fields = (
     <>
-      <label className={styles.field} htmlFor="source-file">
-        Source file
+      <label className={styles.uploadSurface} htmlFor="source-file">
+        <strong>Choose a file</strong>
+        <span>TXT, Markdown, DOCX or text-layer PDF</span>
         <input id="source-file" name="source" type="file" accept=".txt,.md,.docx,.pdf,text/plain,text/markdown,application/pdf" aria-describedby="upload-limits" required />
       </label>
       <label className={styles.field} htmlFor="source-rights">
@@ -115,73 +117,39 @@ export function SourceUpload({
       </label>
       <button className={uploadClass} type="submit" disabled={pending}>{pending ? "Working on your source…" : "Upload source"}</button>
       <p className={styles.help} id="upload-limits">
-        Use a text, Markdown, DOCX, or text-layer PDF. The file is stored privately.
-        Extraction does not clear source rights, and it does not generate a game.
+        Your file is stored privately. Uploading does not verify rights or generate a game.
       </p>
     </>
   );
 
-  let form: ReactNode;
-  if (formOpen) {
-    form = <form className={`${styles.form} ${styles.primary}`} onSubmit={(event) => void upload(event)}>{fields}</form>;
-  } else {
-    form = (
-      <details className={styles.disclosure}>
-        <summary>Add another source</summary>
-        <form className={styles.form} onSubmit={(event) => void upload(event)}>{fields}</form>
-      </details>
-    );
-  }
+  const sourceCards = sources.length === 0 ? null : (
+    <ul className={styles.cards}>
+      {sources.map((source) => {
+        const chosen = selection?.value === source.documentVersionId;
+        const card = <><p className={styles.status}>{statusLabel(source)}</p><h3>{source.filename}</h3><p className={styles.meta}>{rightsLabel(source)} · {source.byteCount} bytes</p></>;
+        return (
+          <li className={styles.card} key={source.documentVersionId} data-selected={chosen ? "true" : undefined}>
+            {selection && usableSource(source) ? (
+              <label className={styles.sourceCard}>
+                <input type="radio" name="workflow-source" value={source.documentVersionId} checked={chosen} aria-label={chosen ? `${source.filename} selected` : `Select ${source.filename}`} onChange={() => selection.onChange(source.documentVersionId)} />
+                <span>{card}<span className={styles.meta}>{chosen ? "Selected" : "Select this content"}</span></span>
+              </label>
+            ) : card}
+            {source.extractionStatus === "pending" && source.rightsStatus !== "blocked" ? <div className={styles.actions}><button className={styles.secondary} type="button" disabled={pending} onClick={() => void continueProcessing(source.documentVersionId)}>Continue processing</button></div> : null}
+          </li>
+        );
+      })}
+    </ul>
+  );
 
   return (
-    <section className={styles.stage} aria-labelledby="upload-heading">
+    <section className={styles.sourcePicker} aria-labelledby="upload-heading">
       <div className={styles.stageHeader}>
-        <h2 id="upload-heading">{sources.length === 0 ? "Upload a source" : "Your sources"}</h2>
-        {sources.length === 0 ? <p className={styles.quiet}>This is the first step. Add a file you have permission to use.</p> : null}
+        <h3 id="upload-heading">Upload new content</h3>
         {waiting ? <p className={styles.quiet}>Next: finish processing a source.</p> : null}
-        {sources.length > 0 && formOpen ? <p className={styles.quiet}>Next: add a source you can use.</p> : null}
       </div>
-      {sources.length === 0 ? <p className={styles.empty}>No source yet.</p> : (
-        <ul className={styles.cards}>
-          {sources.map((source) => {
-            const chosen = selection?.value === source.documentVersionId;
-            const card = (
-              <>
-                <p className={styles.status}>{statusLabel(source)}</p>
-                <h3>{source.filename}</h3>
-                <p className={styles.meta}>{rightsLabel(source.rightsStatus)} · {source.byteCount} bytes</p>
-              </>
-            );
-            return (
-              <li className={styles.card} key={source.documentVersionId} data-selected={chosen ? "true" : undefined}>
-                {selection && usableSource(source) ? (
-                  <label className={styles.sourceCard}>
-                    <input
-                      type="radio"
-                      name="workflow-source"
-                      value={source.documentVersionId}
-                      checked={chosen}
-                      aria-label={chosen ? `${source.filename} selected` : `Select ${source.filename}`}
-                      onChange={() => selection.onChange(source.documentVersionId)}
-                    />
-                    <span>
-                      {card}
-                      <span className={styles.meta}>{chosen ? "Selected" : "Select this source"}</span>
-                    </span>
-                  </label>
-                ) : card}
-                {source.extractionStatus === "pending" && source.rightsStatus !== "blocked" ? (
-                  <div className={styles.actions}>
-                    <button className={styles.secondary} type="button" disabled={pending} onClick={() => void continueProcessing(source.documentVersionId)}>
-                      Continue processing
-                    </button>
-                  </div>
-                ) : null}
-              </li>
-            );
-          })}
-        </ul>
-      )}
+      <form className={`${styles.form} ${styles.uploadPanel}`} onSubmit={(event) => void upload(event)}>{fields}</form>
+      {selection && sourceCards ? <details className={styles.disclosure}><summary>Reuse existing content</summary>{sourceCards}</details> : sourceCards}
       {afterList}
       {error ? <p className={styles.alert} role="alert">{error}</p> : null}
       {pending ? <p className={styles.note} role="status">Working on your source.</p> : null}
@@ -191,7 +159,6 @@ export function SourceUpload({
           {result.cost ? ` Processing took ${result.cost.durationMs} ms and stored ${result.cost.storedBytes} bytes.` : ""}
         </p>
       ) : null}
-      {form}
     </section>
   );
 }

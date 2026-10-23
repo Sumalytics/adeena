@@ -36,42 +36,22 @@ export async function CreatorSession() {
   } catch {
     workflowsUnavailable = true;
   }
-  const current = workflows.length === 0 ? "choose" : drafts.length === 0 ? "generate" : "preview";
-
   return (
     <>
-      <p className={styles.promise}>
-        Start with a source you have permission to use. Adeena stores it privately, then helps you choose a topic.
-      </p>
-      <ol className={styles.steps} aria-label="Creation steps">
-        <li className={styles.step} aria-current={current === "choose" ? "step" : undefined}>
-          <small>1</small>
-          <strong>Choose</strong>
-        </li>
-        <li className={styles.step} aria-current={current === "generate" ? "step" : undefined}>
-          <small>2</small>
-          <strong>Generate</strong>
-        </li>
-        <li className={styles.step} aria-current={current === "preview" ? "step" : undefined}>
-          <small>3</small>
-          <strong>Preview</strong>
-        </li>
-        <li className={styles.step}>
-          <small>4</small>
-          <strong>Share</strong>
-          <small>In private preview</small>
-        </li>
-      </ol>
-      <p className={styles.shareNote}>Open a private preview to review, approve and share an eligible version. Draft edits stay private.</p>
-      <section className={styles.stage} aria-labelledby="experiences-heading">
-        <div className={styles.stageHeader}>
-          <h2 id="experiences-heading">Your experiences</h2>
-          <p className={styles.quiet}>Start a new experience, or continue one you already saved.</p>
-        </div>
+      <p className={styles.promise}>Turn content you have permission to use into a private, playable learning game.</p>
+      <section className={styles.launch} aria-labelledby="new-experience-heading">
+        <p className={styles.eyebrow}>Create something new</p>
+        <h2 id="new-experience-heading">Start with your content</h2>
+        <p>We’ll guide you through the audience, topic and game creation one step at a time.</p>
         <NewExperience />
+      </section>
+      <details className={styles.savedWork}>
+        <summary>Continue saved work <span>{workflows.length + drafts.length}</span></summary>
         {workflowsUnavailable ? <p className={styles.alert} role="alert">Saved experiences could not be loaded.</p> : null}
-        {workflows.length === 0 && !workflowsUnavailable ? <p className={styles.empty}>No saved experience yet.</p> : null}
+        {workflows.length === 0 && drafts.length === 0 && !workflowsUnavailable ? <p className={styles.empty}>Nothing saved yet.</p> : null}
         {workflows.length > 0 ? (
+          <section aria-labelledby="experiences-heading">
+            <h2 id="experiences-heading">In progress</h2>
           <ul className={styles.cards}>
             {workflows.map((workflow) => {
               const source = sources.find((item) => item.documentVersionId === workflow.documentVersionId);
@@ -87,14 +67,11 @@ export async function CreatorSession() {
               );
             })}
           </ul>
+          </section>
         ) : null}
-      </section>
-      <section className={styles.stage} aria-labelledby="drafts-heading">
-        <div className={styles.stageHeader}>
+        {drafts.length > 0 ? (
+          <section aria-labelledby="drafts-heading">
           <h2 id="drafts-heading">Private drafts</h2>
-          <p className={styles.quiet}>Only you can open these. Nothing here is public.</p>
-        </div>
-        {drafts.length === 0 ? <p className={styles.empty}>No private draft yet.</p> : (
           <ul className={styles.cards}>
             {drafts.map((draft) => (
               <li className={styles.card} key={draft.id}>
@@ -105,18 +82,19 @@ export async function CreatorSession() {
                   {" · "}
                   Unpublished
                 </p>
-                <p className={styles.help}>
-                  {draft.liveModel ? "A configured AI model planned this from your selected source. Review the content and all outcomes." : "The local fixture compiled this from the source. It is not a live model result."}
-                  Open it to ask for a change. The original stays until you accept a proposal.
-                </p>
                 <div className={styles.actions}>
                   <Link className={styles.draftLink} href={`/creator/preview/${draft.id}`}>Open private preview</Link>
                 </div>
               </li>
             ))}
           </ul>
-        )}
-      </section>
+          </section>
+        ) : null}
+      </details>
+      <details className={styles.disclosure}>
+        <summary>How creating works</summary>
+        <p>Upload permitted content, choose the audience and topic, then explicitly press Generate. Games stay private until you review and publish them.</p>
+      </details>
       <form className={styles.logout} method="post" action="/auth/logout">
         <button className={styles.secondary} type="submit">Log out</button>
       </form>

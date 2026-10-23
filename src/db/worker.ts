@@ -33,8 +33,8 @@ function mediaType(value: string) {
   throw new SourceError("unsupported-type");
 }
 
-function excerpt(text: string, start: number, end: number) {
-  const slice = text.slice(start, end).slice(0, 280);
+function excerpt(text: string, start: number, end: number, limit = 280) {
+  const slice = text.slice(start, end).slice(0, limit);
   if (!slice) throw new SourceError("invalid-knowledge");
   return slice;
 }
@@ -179,6 +179,7 @@ async function persistSuccess(input: {
         endOffset: span.end,
         pageNumber: span.page,
         excerpt: excerpt(input.knowledge.canonical.text, span.start, span.end),
+        generationExcerpt: excerpt(input.knowledge.canonical.text, span.start, span.end, 1200),
       })),
     );
     await db.insert(knowledgeCollections).values({

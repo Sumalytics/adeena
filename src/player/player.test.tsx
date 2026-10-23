@@ -64,6 +64,12 @@ describe("universal player session", () => {
       ["Repairs recorded", 0],
       ["Keeper notes", 0],
     ]);
+    const coverHtml = renderToStaticMarkup(
+      <PlayerScreen view={cover} renderer={sharedShelfRenderer} onBegin={() => {}} onChoose={() => {}} onReplay={() => {}} />,
+    );
+    expect(coverHtml).toContain("Begin");
+    expect(coverHtml).not.toContain("Tools on the shelf: 3");
+    expect(coverHtml).not.toContain("Current situation");
 
     const scene = presentPlayer(started().snapshot(), sharedShelfPresentation);
     expect(scene.kind).toBe("scene");
@@ -202,7 +208,7 @@ describe("universal player presentation", () => {
     expect(combined).not.toContain("assets/shelf.svg");
   });
 
-  it("shows a visible fallback when a scene has no illustration", () => {
+  it("shows the reusable illustrated stage when a scene has no bespoke illustration", () => {
     const Visual = sharedShelfRenderer.Visual;
     const html = renderToStaticMarkup(
       <Visual
@@ -213,7 +219,7 @@ describe("universal player presentation", () => {
         missing={false}
       />,
     );
-    expect(html).toContain("No illustration for this scene.");
+    expect(html).toContain("A new story begins");
     expect(html).toContain("Keeper knows");
   });
 
