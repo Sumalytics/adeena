@@ -37,3 +37,26 @@ export type CreatorDraftSummary = {
   publicationStatus: "unpublished";
   liveModel: boolean;
 };
+
+export {
+  ARCHETYPE_REGISTRY,
+  NarrationAudioAssetV1,
+  NarrationCacheIdentityV1,
+  NarrationPlaybackTrackV1,
+  VoiceSynthesisRequestV1,
+  VoiceSynthesisResultMetadataV1,
+  validateVisualBlueprint,
+  VISUAL_BLUEPRINT_LIMITS,
+  VISUAL_STAGE_CONTRACT,
+  VisualLearningBlueprintV1,
+  type VisualArchetypeId,
+  type VisualBlueprintContext,
+  type VisualBlueprintDiagnostic,
+  type VisualLearningBlueprint,
+  type VisualScene,
+  type VisualObject,
+  type VisualCue,
+  type NarrationProvider,
+  type VoiceSynthesisRequest,
+  type VoiceSynthesisResult,
+} from "./visual-director/schema";
