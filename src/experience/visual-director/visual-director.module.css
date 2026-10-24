@@ -28,6 +28,15 @@
 .time { min-width: 6.5rem; font-variant-numeric: tabular-nums; color: var(--ink-muted); font-size: .82rem; }
 .motionToggle { display: flex; align-items: center; gap: .4rem; min-height: 2.75rem; padding: 0 .5rem; font-size: .82rem; font-weight: 700; }
 .motionToggle input { width: 1.1rem; height: 1.1rem; accent-color: var(--forest); }
+.audioControls { display: flex; flex: 1 1 100%; align-items: center; gap: .75rem; flex-wrap: wrap; padding-top: .2rem; border-top: 1px solid rgb(25 72 48 / .12); }
+.volumeControl, .speedControl { display: flex; min-height: 2.75rem; align-items: center; gap: .5rem; color: var(--forest-deep); font-size: .8rem; font-weight: 750; }
+.volumeControl { flex: 1 1 12rem; }
+.volumeControl input { width: min(12rem, 100%); accent-color: var(--forest); }
+.speedControl select { min-height: 2.75rem; padding: .4rem 2rem .4rem .65rem; border: 1px solid rgb(25 72 48 / .25); border-radius: .7rem; background: white; color: var(--forest-deep); font: inherit; }
+.playbackStatus { grid-column: 1 / -1; margin: -.25rem 0 0; color: var(--forest); font-size: .8rem; font-weight: 750; }
+.audioError { grid-column: 1 / -1; display: flex; align-items: center; gap: .65rem; flex-wrap: wrap; padding: .75rem; border-left: .35rem solid #b84d39; border-radius: .7rem; background: #fde7e2; color: #6f291e; }
+.audioError span { flex: 1 1 18rem; }
+.audioError button { min-height: 2.75rem; padding: .55rem .9rem; border: 1px solid #b84d39; border-radius: 999px; background: white; color: #6f291e; font: inherit; font-weight: 750; cursor: pointer; }
 .silentNote { grid-column: 1 / -1; margin: -.25rem 0 0; color: var(--ink-muted); font-size: .78rem; }
 .practice, .practiceComplete { grid-column: 1 / -1; min-height: 34rem; padding: clamp(1rem, 3vw, 2rem); border-radius: 1.35rem; background: linear-gradient(145deg, #f5faf5, #fffaf0); box-shadow: inset 0 0 0 1px rgb(25 72 48 / .1); }
 .practiceHeader { display: flex; align-items: start; justify-content: space-between; gap: 1rem; margin-bottom: 1.2rem; }
@@ -113,6 +122,9 @@
   .scrubber { order: 2; flex-basis: 100%; }
   .time { order: 3; }
   .motionToggle { order: 4; margin-left: auto; }
+  .audioControls { order: 5; align-items: stretch; }
+  .volumeControl { flex-basis: 100%; }
+  .speedControl { justify-content: space-between; }
   .practice { padding: .8rem; min-height: 0; }
   .practiceHeader { align-items: stretch; flex-direction: column; }
   .resetChallenge { align-self: start; }
