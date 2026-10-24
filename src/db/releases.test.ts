@@ -23,6 +23,9 @@ import { acceptExperienceEdit, proposeExperienceEdit } from "./edit-repository";
 import { createFilesystemAudioStore } from "@/storage/audio-filesystem";
 import { registerPrivateAudioAsset, retirePrivateAudioAsset } from "./audio-repository";
 import { creatorAudioResponse } from "@/audio/delivery";
+import { AudioStorageError } from "@/storage/audio-object-store";
+import { NarrationPlaybackTrackV1 } from "@/experience/visual-director/schema";
+import { enqueueNarrationGeneration, runNarrationGeneration } from "./narration-repository";
 
 describe("public releases on an isolated database", () => {
   const database = `adeena_release_test_${randomUUID().replaceAll("-", "")}`;
@@ -301,9 +304,61 @@ describe("public releases on an isolated database", () => {
     expect((await creatorAudioResponse({ session, sql, assetId: asset.assetId, range: null, store })).status).toBe(404);
   });
 
+  it("generates one fake narration operation for concurrent duplicate requests and reuses the verified private cache", async () => {
+    const room = await fixture();
+    const root = await mkdtemp(path.join(tmpdir(), "adeena-narration-"));
+    roots.push(root);
+    const store = createFilesystemAudioStore(root);
+    const env = { NODE_ENV: "test", ADEENA_TTS_PROVIDER: "fake" };
+    const base = { experienceVersionId: room.versionId, text: "Water moves downhill and returns to the sea.", caption: "Water moves downhill and returns to the sea.",
+      locale: "en-US", voiceProfileId: "educator-warm-1" as const, style: "warm" as const, rate: 1, cueIds: ["show-water"], approved: true as const };
+    const first = await enqueueNarrationGeneration({ ...room, request: { ...base, narrationSegmentId: "water-one", idempotencyKey: randomUUID() }, env });
+    const second = await enqueueNarrationGeneration({ ...room, request: { ...base, narrationSegmentId: "water-two", idempotencyKey: randomUUID() }, env });
+    const runs = await Promise.all([
+      runNarrationGeneration({ ...room, jobId: first.jobId, leaseOwner: "narration-one", store, env }),
+      runNarrationGeneration({ ...room, jobId: second.jobId, leaseOwner: "narration-two", store, env }),
+    ]);
+    expect(runs.some((item) => item.kind === "ready")).toBe(true);
+    const generated = runs.find((item) => item.kind === "ready");
+    if (!generated || generated.kind !== "ready") throw new Error("generated narration missing");
+    const playback = NarrationPlaybackTrackV1.parse(generated.playback);
+    expect(playback.captions).toEqual([{ startMs: 0, endMs: playback.durationMs, text: base.text }]);
+    const authenticatedAudio = await creatorAudioResponse({ session: sessionFromAuthUser({ id: room.userId }), sql, assetId: generated.assetId, range: null, store });
+    expect(authenticatedAudio.status).toBe(200);
+    expect(authenticatedAudio.headers.get("content-type")).toBe("audio/wav");
+    const pendingIndex = runs.findIndex((item) => item.kind === "pending");
+    if (pendingIndex >= 0) {
+      const pending = pendingIndex === 0 ? first : second;
+      const cached = await runNarrationGeneration({ ...room, jobId: pending.jobId, leaseOwner: "narration-cache", store, env });
+      expect(cached.kind).toBe("ready");
+    }
+    const costs = await admin<{ cache_status: string; actual: number }[]>`select cache_status,actual_cost_micros::int as actual from narration_generation_costs where workspace_id=${room.workspaceId}::uuid order by cache_status`;
+    expect(costs).toEqual([{ cache_status: "hit", actual: 0 }, { cache_status: "miss", actual: 0 }]);
+    expect(await admin`select * from narration_audio_cache where workspace_id=${room.workspaceId}::uuid`).toHaveLength(1);
+    expect(await admin`select * from private_audio_assets where workspace_id=${room.workspaceId}::uuid`).toHaveLength(2);
+    const replay = await runNarrationGeneration({ ...room, jobId: first.jobId, leaseOwner: "narration-replay", store, env });
+    expect(replay).toMatchObject({ kind: "done", status: "ready" });
+    expect(await admin`select * from narration_generation_costs where workspace_id=${room.workspaceId}::uuid`).toHaveLength(2);
+    const changed = await enqueueNarrationGeneration({ ...room, request: { ...base, text: "Water follows a changed route.", caption: "Water follows a changed route.", narrationSegmentId: "water-one", idempotencyKey: randomUUID() }, env });
+    expect((await runNarrationGeneration({ ...room, jobId: changed.jobId, leaseOwner: "narration-changed", store, env })).kind).toBe("ready");
+    expect(await admin`select * from narration_audio_cache where workspace_id=${room.workspaceId}::uuid`).toHaveLength(2);
+    const missCount = await admin<{ total: number }[]>`select count(*)::int as total from narration_generation_costs where workspace_id=${room.workspaceId}::uuid and cache_status='miss'`;
+    expect(missCount[0]?.total).toBe(2);
+    const other = await fixture();
+    await expect(runNarrationGeneration({ ...other, jobId: first.jobId, leaseOwner: "narration-other", store, env })).rejects.toMatchObject({ code: "authorization-required" });
+    const storageJob = await enqueueNarrationGeneration({ ...room, request: { ...base, text: "A storage failure sentence.", caption: "A storage failure sentence.", narrationSegmentId: "storage-failure", idempotencyKey: randomUUID() }, env });
+    const failingStore = { ...store, put: async () => { throw new AudioStorageError("unavailable"); } };
+    await expect(runNarrationGeneration({ ...room, jobId: storageJob.jobId, leaseOwner: "narration-storage", store: failingStore, env })).rejects.toMatchObject({ code: "storage-failed", knownCharge: true });
+    const metadataJob = await enqueueNarrationGeneration({ ...room, request: { ...base, text: "A metadata failure sentence.", caption: "A metadata failure sentence.", narrationSegmentId: "metadata-failure", idempotencyKey: randomUUID() }, env });
+    const invalidLocatorStore = { ...store, put: async () => ({ locator: "invalid-private-locator", created: true }) };
+    await expect(runNarrationGeneration({ ...room, jobId: metadataJob.jobId, leaseOwner: "narration-metadata", store: invalidLocatorStore, env })).rejects.toMatchObject({ code: "metadata-failed", knownCharge: true });
+    const failures = await admin<{ failure_code: string }[]>`select failure_code from narration_generation_jobs where id in (${storageJob.jobId}::uuid,${metadataJob.jobId}::uuid) order by failure_code`;
+    expect(failures).toEqual([{ failure_code: "metadata-failed" }, { failure_code: "storage-failed" }]);
+  });
+
   it("can reverse and reapply migrations in the disposable database", async () => {
     await migrateDown(admin);
     expect((await migrateUp(admin)).applied).toBe(true);
     expect((await migrateUp(admin)).applied).toBe(false);
-  });
+  }, 15_000);
 });

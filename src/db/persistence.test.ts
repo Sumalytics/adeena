@@ -106,7 +106,7 @@ describe("postgresql source persistence", () => {
   afterAll(async () => {
     try {
       if (ready && admin) {
-        await admin`TRUNCATE private_audio_assets, source_permission_declarations, source_rights_clearances, experience_releases, creator_workflows, experience_edit_events, experience_edit_costs, experience_current_drafts, experience_edit_jobs, experience_generation_costs, experience_validation_results, experience_plans, experience_versions, experience_generation_jobs, recommendation_runs, topic_candidates, topic_overrides, source_processing_costs, knowledge_nodes, source_spans, knowledge_collections, extraction_results, extraction_jobs, source_document_versions, source_documents, workspace_memberships, workspaces`;
+        await admin`TRUNCATE narration_generation_costs, narration_cache_claims, narration_audio_cache, narration_generation_jobs, narration_development_budgets, private_audio_assets, source_permission_declarations, source_rights_clearances, experience_releases, creator_workflows, experience_edit_events, experience_edit_costs, experience_current_drafts, experience_edit_jobs, experience_generation_costs, experience_validation_results, experience_plans, experience_versions, experience_generation_jobs, recommendation_runs, topic_candidates, topic_overrides, source_processing_costs, knowledge_nodes, source_spans, knowledge_collections, extraction_results, extraction_jobs, source_document_versions, source_documents, workspace_memberships, workspaces`;
       }
     } finally {
       if (admin) await admin.end({ timeout: 1 });
@@ -172,6 +172,19 @@ describe("postgresql source persistence", () => {
       { name: "experience_plans", forced: true },
       { name: "experience_validation_results", forced: true },
       { name: "experience_versions", forced: true },
+    ]);
+    const narrationTables = await admin`
+      select c.relname as name, c.relforcerowsecurity as forced
+      from pg_class c join pg_namespace n on n.oid=c.relnamespace
+      where n.nspname='public' and c.relname in (
+        'narration_development_budgets','narration_generation_jobs','narration_audio_cache','narration_cache_claims','narration_generation_costs'
+      ) order by c.relname`;
+    expect(narrationTables).toEqual([
+      { name: "narration_audio_cache", forced: true },
+      { name: "narration_cache_claims", forced: true },
+      { name: "narration_development_budgets", forced: true },
+      { name: "narration_generation_costs", forced: true },
+      { name: "narration_generation_jobs", forced: true },
     ]);
     const workflows = await admin`
       select c.relforcerowsecurity as forced

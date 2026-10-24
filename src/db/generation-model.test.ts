@@ -33,7 +33,7 @@ describe("durable model generation", () => {
     await sql?.end({ timeout: 1 }); await admin?.end({ timeout: 1 });
     await maintenance.unsafe(`DROP DATABASE ${database}`); await maintenance.end();
     if (root) await rm(root, { recursive: true, force: true });
-  });
+  }, 20_000);
   it("reserves two calls, persists usage, replays without network, rejects semantic failure and enforces the shared quota", async () => {
     const identity = issueIdentityForIsolatedTests(randomUUID());
     const workspaceId = randomUUID();
