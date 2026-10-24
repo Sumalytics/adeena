@@ -5,7 +5,7 @@ import type { Sql } from "postgres";
 import { databaseFailure } from "./client";
 
 const directory = path.dirname(fileURLToPath(import.meta.url));
-const migrations = ["0001_ingestion", "0002_creator_workspace", "0003_membership_force", "0004_topic_recommendation", "0005_experience_generation", "0006_experience_editing", "0007_edit_spend", "0008_free_development", "0009_creator_workflows", "0010_creator_workflow_integrity", "0011_public_releases", "0012_creator_share", "0013_source_game_generation", "0014_simplified_share", "0015_generation_excerpts"] as const;
+const migrations = ["0001_ingestion", "0002_creator_workspace", "0003_membership_force", "0004_topic_recommendation", "0005_experience_generation", "0006_experience_editing", "0007_edit_spend", "0008_free_development", "0009_creator_workflows", "0010_creator_workflow_integrity", "0011_public_releases", "0012_creator_share", "0013_source_game_generation", "0014_simplified_share", "0015_generation_excerpts", "0016_private_audio_assets"] as const;
 
 function script(name: string) {
   return readFileSync(path.join(directory, "migrations", name), "utf8");
@@ -37,6 +37,7 @@ export async function migrateUp(sql: Sql) {
 export async function migrateDown(sql: Sql) {
   try {
     await sql.begin(async (tx) => {
+      await tx.unsafe(script("0016_private_audio_assets.down.sql"));
       await tx.unsafe(script("0015_generation_excerpts.down.sql"));
       await tx.unsafe(script("0014_simplified_share.down.sql"));
       await tx.unsafe(script("0013_source_game_generation.down.sql"));

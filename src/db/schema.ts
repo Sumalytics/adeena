@@ -27,6 +27,24 @@ export const sourceDocuments = pgTable("source_documents", {
   createdAt: timestamps.createdAt,
 });
 
+export const privateAudioAssets = pgTable("private_audio_assets", {
+  id: uuid("id").primaryKey(),
+  workspaceId: uuid("workspace_id").notNull(),
+  experienceVersionId: uuid("experience_version_id").notNull(),
+  narrationSegmentId: text("narration_segment_id").notNull(),
+  contentHash: text("content_hash").notNull(),
+  storageLocator: text("storage_locator").notNull(),
+  mimeType: text("mime_type").notNull(),
+  byteCount: integer("byte_count").notNull(),
+  durationMs: integer("duration_ms").notNull(),
+  locale: text("locale").notNull(),
+  voiceProfileRef: text("voice_profile_ref").notNull(),
+  status: text("status").notNull(),
+  provenance: jsonb("provenance").notNull(),
+  createdAt: timestamps.createdAt,
+  retiredAt: timestamp("retired_at", { withTimezone: true, mode: "date" }),
+});
+
 export const sourceDocumentVersions = pgTable("source_document_versions", {
   id: uuid("id").primaryKey(),
   documentId: uuid("document_id").notNull(),

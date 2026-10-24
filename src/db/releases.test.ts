@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
@@ -20,6 +20,9 @@ import { recommendFirstTopic } from "./topic-repository";
 import { createPlayableExperience } from "./experience-repository";
 import { publishRelease, readPublicRelease, revokeRelease, clearSourceRights, publicationStatus } from "./release-repository";
 import { acceptExperienceEdit, proposeExperienceEdit } from "./edit-repository";
+import { createFilesystemAudioStore } from "@/storage/audio-filesystem";
+import { registerPrivateAudioAsset, retirePrivateAudioAsset } from "./audio-repository";
+import { creatorAudioResponse } from "@/audio/delivery";
 
 describe("public releases on an isolated database", () => {
   const database = `adeena_release_test_${randomUUID().replaceAll("-", "")}`;
@@ -261,6 +264,41 @@ describe("public releases on an isolated database", () => {
     await acceptExperienceEdit({ ...room, editJobId: edit.proposal.editJobId, expectedBaseVersionId: room.versionId });
     expect((await publicationStatus({ ...room, versionId: edit.proposal.proposedVersionId })).eligible).toBe(true);
     expect((await publishRelease({ ...room, body: { experienceVersionId: edit.proposal.proposedVersionId } })).releaseId).toBeTruthy();
+  });
+
+  it("delivers private immutable audio only to an authorized workspace member, including ranges", async () => {
+    const room = await fixture();
+    const other = await fixture();
+    const root = await mkdtemp(path.join(tmpdir(), "adeena-private-audio-"));
+    roots.push(root);
+    const store = createFilesystemAudioStore(root);
+    const bytes = await readFile("docs/media/visual-director-audio/air-start.wav");
+    const contentHash = createHash("sha256").update(bytes).digest("hex");
+    const input = {
+      ...room, experienceVersionId: room.versionId, narrationSegmentId: "air-start", contentHash,
+      mimeType: "audio/wav" as const, bytes, durationMs: 3_364, locale: "en-GH", voiceProfileRef: "educator-warm-1",
+      provenance: { kind: "authorized-test-asset" as const, generator: "Windows SAPI local fixture", generatedAt: "2026-10-24T01:48:34.000Z" }, store,
+    };
+    const asset = await registerPrivateAudioAsset(input);
+    const duplicate = await registerPrivateAudioAsset(input);
+    expect(duplicate.assetId).toBe(asset.assetId);
+    expect(asset.storageLocator).toMatch(/^private-audio:/);
+    const session = sessionFromAuthUser({ id: room.userId });
+    const full = await creatorAudioResponse({ session, sql, assetId: asset.assetId, range: null, store });
+    expect(full.status).toBe(200);
+    expect(full.headers.get("content-type")).toBe("audio/wav");
+    expect(full.headers.get("content-length")).toBe(String(bytes.byteLength));
+    const partial = await creatorAudioResponse({ session, sql, assetId: asset.assetId, range: "bytes=10-109", store });
+    expect(partial.status).toBe(206);
+    expect(partial.headers.get("content-range")).toBe(`bytes 10-109/${bytes.byteLength}`);
+    expect((await partial.arrayBuffer()).byteLength).toBe(100);
+    expect((await creatorAudioResponse({ session: null, sql, assetId: asset.assetId, range: null, store })).status).toBe(401);
+    expect((await creatorAudioResponse({ session: sessionFromAuthUser({ id: other.userId }), sql, assetId: asset.assetId, range: null, store })).status).toBe(404);
+    expect((await creatorAudioResponse({ session, sql, assetId: "malformed", range: null, store })).status).toBe(404);
+    expect(await sql`select * from private_audio_assets`).toHaveLength(0);
+    await expect(admin`update private_audio_assets set duration_ms = 1 where id = ${asset.assetId}`).rejects.toThrow(/immutable/);
+    expect(await retirePrivateAudioAsset({ ...room, assetId: asset.assetId, store })).toBe(true);
+    expect((await creatorAudioResponse({ session, sql, assetId: asset.assetId, range: null, store })).status).toBe(404);
   });
 
   it("can reverse and reapply migrations in the disposable database", async () => {

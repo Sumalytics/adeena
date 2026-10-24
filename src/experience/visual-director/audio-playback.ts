@@ -46,7 +46,7 @@ export function validateNarrationMedia(scene: VisualScene, input: readonly Narra
     if (!segment || playback.segmentId !== segment.id) throw new Error("Narration media order must match the validated scene narration order.");
     if (candidate.plannedStartMs !== segment.startMs || candidate.plannedDurationMs !== segment.durationMs) throw new Error("Narration media alignment must match the validated scene timeline.");
     if (playback.captions.length !== 1 || playback.captions[0]?.text !== segment.caption) throw new Error("Narration media captions must match the validated spoken narration.");
-    if (!candidate.source.startsWith("/api/dev/visual-director-audio/")) throw new Error("Narration media must use an approved local development asset route.");
+    if (!/^\/api\/(?:dev\/visual-director-audio\/[a-z][a-z0-9-]{0,40}|creator\/audio\/[0-9a-f-]{36})$/.test(candidate.source)) throw new Error("Narration media must use an approved private or local development asset route.");
     return { ...candidate, playback };
   });
 }

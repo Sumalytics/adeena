@@ -118,7 +118,8 @@ describe("Visual Director narration playback", () => {
 
   it("fails closed for unapproved sources and mismatched alignment", () => {
     const scene = authoredProcessFixture.scenes[0];
-    expect(() => validateNarrationMedia(scene, [{ ...processDemoNarration[0], source: "https://example.test/private.wav" }, ...processDemoNarration.slice(1)])).toThrow("approved local development asset");
+    expect(() => validateNarrationMedia(scene, [{ ...processDemoNarration[0], source: "https://example.test/private.wav" }, ...processDemoNarration.slice(1)])).toThrow("approved private or local development asset");
+    expect(() => validateNarrationMedia(scene, [{ ...processDemoNarration[0], source: "/api/creator/audio/not-a-uuid" }, ...processDemoNarration.slice(1)])).toThrow("approved private or local development asset");
     expect(() => validateNarrationMedia(scene, [{ ...processDemoNarration[0], plannedDurationMs: 3_364 }, ...processDemoNarration.slice(1)])).toThrow("validated scene timeline");
   });
 
