@@ -18,6 +18,7 @@ export const StoredVisualContextV1 = z.object({
   ageBand: z.enum(["5-7", "8-10", "11-13", "14-18", "adult", "unspecified"]),
   locale: z.string().regex(/^[a-z]{2,3}(?:-[A-Z]{2})?$/),
   implementedArchetypes: z.array(z.enum(["process-pathway@1", "venn-two-set@1", "timeline-sequence@1", "spatial-regions@1"])).min(1),
+  allowedAssetIds: z.array(Id).max(64).optional(),
 }).strict();
 
 export const VisualExperienceAssociationV1 = z.object({

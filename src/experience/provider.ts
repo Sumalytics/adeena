@@ -9,7 +9,12 @@ export const CONFIGURED_PROVIDER = "configured-provider" as const;
 export const FIXTURE_PRICE_VERSION = "fixture-0" as const;
 export const PROMPT_VERSION = "fixture-plan@1" as const;
 export const LIVE_PLAN_PROMPT_VERSION = "source-plan@1" as const;
-export const GENERATION_LIMITS = { plan: { input: 8000, output: 3500 }, review: { input: 16000, output: 1000 } } as const;
+export const GENERATION_LIMITS = {
+  plan: { input: 8000, output: 3500 },
+  review: { input: 16000, output: 1000 },
+  visualPlan: { input: 16000, output: 8000 },
+  visualReview: { input: 20000, output: 1500 },
+} as const;
 export type StructuredGeneration = { kind: keyof typeof GENERATION_LIMITS; schema: object };
 export const COMPILER_VERSION = "1" as const;
 const MODEL_NAME = /^[a-z0-9@.:/-]{1,80}$/;

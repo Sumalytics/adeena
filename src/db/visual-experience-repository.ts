@@ -17,7 +17,7 @@ const IMPLEMENTED = Object.entries(ARCHETYPE_REGISTRY).filter(([, value]) => val
 const canonical = (value: unknown) => JSON.stringify(value, (_key, item) => item && typeof item === "object" && !Array.isArray(item) ? Object.fromEntries(Object.entries(item).sort(([a],[b]) => a.localeCompare(b))) : item);
 const hash = (value: unknown) => createHash("sha256").update(canonical(value)).digest("hex");
 
-function mappingIsValid(mapping: VisualSceneMapping, blueprint: VisualLearningBlueprint, manifest: ExperienceManifest) {
+export function mappingIsValid(mapping: VisualSceneMapping, blueprint: VisualLearningBlueprint, manifest: ExperienceManifest) {
   if (mapping.legacyExperienceId !== manifest.experienceId) return false;
   const visualScenes = new Set(blueprint.scenes.map((scene) => scene.id));
   const legacyScenes = new Map(manifest.scenes.map((scene) => [scene.id, scene]));
