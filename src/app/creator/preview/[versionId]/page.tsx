@@ -51,7 +51,7 @@ async function PreviewSession({ params }: { params: Promise<{ versionId: string 
       </main>
     );
   }
-  const { preview, history, originalManifest, timing } = result;
+  const { preview, visual, history, originalManifest, timing } = result;
   const workflowId = await creatorWorkflowForPreview(session.identity, versionId, preview.parentVersionId);
   const backHref = workflowId ? `/creator/w/${workflowId}` : "/creator";
   const timingLabel = `workspace=${timing.workspaceMs} preview=${timing.previewMs} history=${timing.historyMs} parallel=${timing.parallelMs} original=${timing.originalMs}`;
@@ -66,7 +66,7 @@ async function PreviewSession({ params }: { params: Promise<{ versionId: string 
       <p className={`${page.links} ${studio.back}`}><Link href={backHref}>{workflowId ? "Back to this experience" : "Back to creator"}</Link></p>
       <header className={studio.heading}><p className={studio.status}>{status}</p></header>
       <section className={studio.playable} aria-label={`${preview.manifest.title} playable preview`}>
-        <ExperiencePreview manifest={preview.manifest} notice={notice} />
+        <ExperiencePreview manifest={preview.manifest} notice={notice} visual={visual} />
       </section>
       <ExperienceActions
         key={isProposal ? "proposal" : preview.isCurrent ? "current" : "kept"}

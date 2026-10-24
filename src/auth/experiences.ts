@@ -14,6 +14,7 @@ import type { CreatorDraftSummary } from "@/experience/public";
 import { FIXTURE_PROVIDER, CONFIGURED_PROVIDER, configuredEditAuthorization, closedProviderError, selectGenerationProvider } from "@/experience/provider";
 import { SourceError } from "@/source/errors";
 import type { VerifiedIdentity } from "@/db/identity";
+import { readVisualExperience } from "@/db/visual-experience-repository";
 import { creatorDatabase } from "./database";
 import type { CreatorSession } from "./subject";
 
@@ -125,21 +126,23 @@ export async function readCreatorPreview(identity: VerifiedIdentity, versionId: 
     const workspace = await ensureIndividualWorkspace(creatorDatabase(), identity);
     const workspaceMs = Date.now() - started;
     const parallelStarted = Date.now();
-    const [previewResult, historyResult] = await Promise.all([
+    const [previewResult, historyResult, visualResult] = await Promise.all([
       timedRead(() => readPlayableExperience(creatorDatabase(), identity, workspace.workspaceId, versionId)),
       timedRead(() => listExperienceRevisions(creatorDatabase(), identity, workspace.workspaceId, versionId)),
+      timedRead(() => readVisualExperience({ sql: creatorDatabase(), identity, workspaceId: workspace.workspaceId, experienceVersionId: versionId })),
     ]);
     const preview = previewResult.value;
     const previewMs = previewResult.ms;
     const history = historyResult.value;
     const historyMs = historyResult.ms;
+    const visual = visualResult.value;
     const parallelMs = Date.now() - parallelStarted;
     const originalStarted = Date.now();
     const originalManifest = preview.parentVersionId && preview.edit?.status === "ready" && !preview.isCurrent
       ? (await readPlayableExperience(creatorDatabase(), identity, workspace.workspaceId, preview.parentVersionId)).manifest
       : null;
     const originalMs = Date.now() - originalStarted;
-    return { ok: true as const, preview, history, originalManifest, timing: { workspaceMs, previewMs, historyMs, originalMs, parallelMs } };
+    return { ok: true as const, preview, visual, history, originalManifest, timing: { workspaceMs, previewMs, historyMs, originalMs, parallelMs } };
   } catch (error) {
     const code = error instanceof SourceError ? error.code : "transient";
     return { ok: false as const, error: code, timing: { workspaceMs: Date.now() - started, previewMs: 0, historyMs: 0, originalMs: 0 } };

@@ -95,7 +95,7 @@ function NarratedExplanation(props: ExplanationProps & { narrationMedia: readonl
   ) : null;
 
   const status = snapshot.status === "loading" ? "Loading narration…" : snapshot.status === "buffering" ? "Buffering narration…" : snapshot.status === "playing" ? "Narration playing" : "Prerecorded narration ready";
-  return <ExplanationView {...props} snapshot={snapshot} controller={controller} mediaNote="Prerecorded local development narration. No speech service is called during playback." audioControls={audioControls} errorControls={errorControls} statusAnnouncement={status} />;
+  return <ExplanationView {...props} snapshot={snapshot} controller={controller} mediaNote="Private prerecorded narration. No speech service is called during playback." audioControls={audioControls} errorControls={errorControls} statusAnnouncement={status} />;
 }
 
 function ExplanationView({ scene, reducedMotion, controlledReducedMotion, setLocalReducedMotion, onBeginPractice, snapshot, controller, mediaNote, audioControls, errorControls, statusAnnouncement }: ExplanationProps & {

@@ -26,6 +26,8 @@ import { creatorAudioResponse } from "@/audio/delivery";
 import { AudioStorageError } from "@/storage/audio-object-store";
 import { NarrationPlaybackTrackV1 } from "@/experience/visual-director/schema";
 import { enqueueNarrationGeneration, runNarrationGeneration } from "./narration-repository";
+import { readVisualExperience } from "./visual-experience-repository";
+import { createAuthoredVisualFixture } from "@/auth/visual-experience";
 
 describe("public releases on an isolated database", () => {
   const database = `adeena_release_test_${randomUUID().replaceAll("-", "")}`;
@@ -52,7 +54,7 @@ describe("public releases on an isolated database", () => {
     await Promise.all(roots.map((root) => rm(root, { recursive: true, force: true })));
   });
 
-  async function fixture(rights: "cleared" | "unverified" = "cleared", permissionDeclared = true) {
+  async function fixture(rights: "cleared" | "unverified" = "cleared", permissionDeclared = true, subject: "water" | "respiration" = "water") {
     const userId = randomUUID();
     const identity = issueIdentityForIsolatedTests(userId);
     const workspaceId = randomUUID();
@@ -60,7 +62,9 @@ describe("public releases on an isolated database", () => {
     const root = await mkdtemp(path.join(tmpdir(), "adeena-release-"));
     roots.push(root);
     const store = createFilesystemObjectStore(root);
-    const bytes = Buffer.from("# Water\n\n## Rivers\n\n" + "Water moves through rivers and returns to the sea. Learners compare the source note and explain what happens using only this passage. ".repeat(4));
+    const bytes = Buffer.from(subject === "respiration"
+      ? "# Breathing route\n\n## Airway sequence\n\n" + "Air enters through the nose or mouth, travels through the trachea and bronchi, then reaches smaller airways and the alveoli. Oxygen enters nearby blood while carbon dioxide moves into the air sacs to be exhaled. ".repeat(4)
+      : "# Water\n\n## Rivers\n\n" + "Water moves through rivers and returns to the sea. Learners compare the source note and explain what happens using only this passage. ".repeat(4));
     const hash = createHash("sha256").update(bytes).digest("hex");
     const stored = await store.putOriginal(workspaceId, hash, bytes);
     const documentId = randomUUID();
@@ -354,6 +358,34 @@ describe("public releases on an isolated database", () => {
     await expect(runNarrationGeneration({ ...room, jobId: metadataJob.jobId, leaseOwner: "narration-metadata", store: invalidLocatorStore, env })).rejects.toMatchObject({ code: "metadata-failed", knownCharge: true });
     const failures = await admin<{ failure_code: string }[]>`select failure_code from narration_generation_jobs where id in (${storageJob.jobId}::uuid,${metadataJob.jobId}::uuid) order by failure_code`;
     expect(failures).toEqual([{ failure_code: "metadata-failed" }, { failure_code: "storage-failed" }]);
+  });
+
+  it("loads an authored visual fixture through the version preview path with private narration and tenant isolation", async () => {
+    const room = await fixture("cleared", true, "respiration");
+    const other = await fixture();
+    const audioRoot = await mkdtemp(path.join(tmpdir(), "adeena-visual-audio-"));
+    roots.push(audioRoot);
+    const audioStore = createFilesystemAudioStore(audioRoot);
+    expect(await readVisualExperience({ ...room, experienceVersionId: room.versionId })).toBeNull();
+    const network = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("preview must not call a provider"));
+    try {
+      const created = await createAuthoredVisualFixture({ session: sessionFromAuthUser({ id: room.userId }), sql, body: { experienceVersionId: room.versionId }, store: audioStore });
+      expect(created.status).toBe(201);
+      const visual = await readVisualExperience({ ...room, experienceVersionId: room.versionId });
+      expect(visual?.status).toBe("ready");
+      if (!visual || visual.status !== "ready") throw new Error("visual association missing");
+      expect(visual.association.blueprint.scenes[0]?.id).toBe("air-path");
+      expect(visual.association.mapping.scenes[0]?.visualSceneId).toBe("air-path");
+      expect(visual.narration).toHaveLength(3);
+      expect(network).not.toHaveBeenCalled();
+      const assetId = visual.narration[0]?.playback.audioAssetId ?? randomUUID();
+      expect((await creatorAudioResponse({ session: sessionFromAuthUser({ id: room.userId }), sql, assetId, range: null, store: audioStore })).status).toBe(200);
+      expect((await creatorAudioResponse({ session: sessionFromAuthUser({ id: other.userId }), sql, assetId, range: null, store: audioStore })).status).toBe(404);
+      expect(await readVisualExperience({ ...other, experienceVersionId: room.versionId })).toBeNull();
+      await expect(admin`update visual_experience_blueprints set renderer_version='visual-renderer@2' where id=${visual.association.associationId}::uuid`).rejects.toThrow(/immutable/);
+    } finally { network.mockRestore(); }
+    const unrelated = await fixture();
+    expect((await createAuthoredVisualFixture({ session: sessionFromAuthUser({ id: unrelated.userId }), sql, body: { experienceVersionId: unrelated.versionId } })).status).toBe(422);
   });
 
   it("can reverse and reapply migrations in the disposable database", async () => {
