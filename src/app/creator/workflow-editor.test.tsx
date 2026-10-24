@@ -123,6 +123,16 @@ describe("creator workflow screen", () => {
     expect(html).toContain("/creator/preview/77777777-7777-4777-8777-777777777777");
   });
 
+  it("shows the automatic visual stage and a truthful legacy fallback", () => {
+    const source = [{ documentVersionId: workflow.documentVersionId ?? "", filename: "rivers.md", extractionStatus: "complete" as const, rightsStatus: "cleared" as const, permissionDeclared: true, byteCount: 128 }];
+    const pending = renderToStaticMarkup(<WorkflowEditor workflow={workflow} sources={source} recommendation={recommendation} generation={{ jobId: "88888888-8888-4888-8888-888888888888", status: "compiling", experienceVersionId: "77777777-7777-4777-8777-777777777777", failureCode: null, previewPath: null, liveModel: true, visualStatus: "planning", stageLabel: "Preparing animated explanation", visualMessage: null, legacyOnly: false }} liveGeneration />);
+    expect(pending).toContain("Preparing animated explanation");
+    expect(pending).not.toContain("Open private preview");
+    const fallback = renderToStaticMarkup(<WorkflowEditor workflow={{ ...workflow, experienceVersionId: "77777777-7777-4777-8777-777777777777" }} sources={source} recommendation={recommendation} generation={{ jobId: "88888888-8888-4888-8888-888888888888", status: "ready", experienceVersionId: "77777777-7777-4777-8777-777777777777", failureCode: null, previewPath: "/creator/preview/77777777-7777-4777-8777-777777777777", liveModel: true, visualStatus: "unsupported", stageLabel: "Visual generation unavailable", visualMessage: "This topic needs a timeline treatment that the current player does not support yet.", legacyOnly: true }} liveGeneration />);
+    expect(fallback).toContain("timeline treatment");
+    expect(fallback).toContain("Open private preview");
+  });
+
   it("resolves only an automatically recommended topic", () => {
     expect(topicSavePlan(recommendation)).toBe("resolve");
     expect(topicSavePlan({

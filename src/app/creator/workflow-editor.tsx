@@ -107,6 +107,26 @@ export function WorkflowEditor({
     previousStage.current = activeStage;
   }, [activeStage]);
 
+  useEffect(() => {
+    if (!generationRunning) return;
+    let active = true;
+    const poll = async () => {
+      try {
+        const response = await fetch(`/api/creator/workflows/${current.id}/generate`, { cache: "no-store" });
+        const payload = await response.json() as { workflow?: CreatorWorkflowView; generation?: WorkflowGenerationState };
+        if (!active || !response.ok || !payload.generation) return;
+        if (payload.workflow) setCurrent(payload.workflow);
+        setDraft(payload.generation);
+        if (payload.generation.status === "ready" && payload.generation.experienceVersionId) router.push(`/creator/preview/${payload.generation.experienceVersionId}`);
+      } catch {
+        // Keep the durable server state; the next interval can recover a transient read failure.
+      }
+    };
+    void poll();
+    const timer = window.setInterval(() => void poll(), 1_200);
+    return () => { active = false; window.clearInterval(timer); };
+  }, [current.id, generationRunning, router]);
+
   function applyWorkflow(next: CreatorWorkflowView) {
     setCurrent(next);
     setSourceChoice(next.documentVersionId);
@@ -406,12 +426,12 @@ export function WorkflowEditor({
           <p className={styles.eyebrow}>Ready</p>
           <h2 id="generate-heading">Create your playable game</h2>
           <p>Your game will stay private until you review and choose to share it.</p>
-          {draft && draft.status !== "ready" ? <p className={styles.note} role="status">{generationStatusCopy(draft.status)}</p> : null}
+          {draft && draft.status !== "ready" ? <p className={styles.note} role="status">{draft.stageLabel ?? generationStatusCopy(draft.status)}</p> : null}
           {draft?.status === "failed" ? <p className={styles.alert} role="alert">{generationFailureCopy(draft.failureCode)}</p> : null}
           {generationGate && !generationGate.allowed ? <p className={styles.alert}>{generationGate.message}</p> : null}
-          {generationGate?.allowed && !previewId && draft?.status !== "failed" ? (
+          {generationGate?.allowed && !previewId && draft?.status !== "failed" && !generationRunning ? (
             <button className={styles.button} type="button" disabled={pending || stale || sourceDirty || audienceDirty} onClick={() => void generateDraft()}>
-              {generationRunning ? "Continue generation" : "Generate my experience"}
+              Generate my experience
             </button>
           ) : null}
           <details className={styles.disclosure}>
@@ -426,6 +446,7 @@ export function WorkflowEditor({
           <p className={styles.eyebrow}>Your game is ready</p>
           <h2 id="preview-heading">Play your private draft</h2>
           <p>Try every path, improve anything that needs work, then share when you are ready.</p>
+          {draft?.visualMessage ? <p className={styles.note} role="status">{draft.visualMessage}</p> : null}
           <Link className={styles.draftLink} href={`/creator/preview/${previewId}`}>Open private preview</Link>
         </section>
       ) : null}

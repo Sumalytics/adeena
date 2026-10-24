@@ -5,7 +5,9 @@ import { PATCH } from "@/app/api/creator/workflows/[workflowId]/route";
 import { POST } from "@/app/api/creator/workflows/route";
 import { requestOriginAllowed } from "./password-post";
 import { sessionFromAuthUser } from "./subject";
-import { creatorWorkflowCreateResponse, creatorWorkflowGenerateResponse, creatorWorkflowReadResponse, creatorWorkflowUpdateResponse } from "./workflows";
+import { creatorGenerationJourney, creatorWorkflowCreateResponse, creatorWorkflowGenerateResponse, creatorWorkflowReadResponse, creatorWorkflowUpdateResponse } from "./workflows";
+import type { CreatorExperienceView } from "@/experience/public";
+import type { VisualGenerationView } from "@/db/visual-generation-repository";
 
 const workflowId = "11111111-1111-4111-8111-111111111111";
 
@@ -18,6 +20,14 @@ function mutation(url: string, origin: string, site = "cross-site") {
 }
 
 describe("creator workflow requests", () => {
+  it("does not report preview readiness before visual validation and labels truthful fallbacks", () => {
+    const base: CreatorExperienceView = { jobId: workflowId, status: "ready", experienceVersionId: "22222222-2222-4222-8222-222222222222", title: "Lesson", reviewStatus: "ready-for-review", publicationStatus: "unpublished", rightsStatus: "cleared", failureCode: null, replayed: false, provider: "configured-provider", liveModel: true, aiGenerationAuthorized: true, usage: null, previewPath: "/creator/preview/22222222-2222-4222-8222-222222222222" };
+    const visual = (internalStatus: VisualGenerationView["internalStatus"], diagnostics?: VisualGenerationView["diagnostics"]): VisualGenerationView => ({ jobId: "33333333-3333-4333-8333-333333333333", status: internalStatus === "ready" ? "ready" : internalStatus === "unsupported" ? "unsupported-visual-treatment" : internalStatus === "failed" ? "rejected" : "in-progress", internalStatus, diagnostics, replayed: false });
+    expect(creatorGenerationJourney(base, visual("queued"))).toMatchObject({ status: "compiling", previewPath: null, stageLabel: "Preparing animated explanation" });
+    expect(creatorGenerationJourney(base, visual("reviewing"))).toMatchObject({ status: "validating", stageLabel: "Checking the learning content" });
+    expect(creatorGenerationJourney(base, visual("ready"))).toMatchObject({ status: "ready", visualStatus: "ready", legacyOnly: false });
+    expect(creatorGenerationJourney(base, visual("unsupported", [{ code: "required-capability", message: "timeline-sequence@1" }]))).toMatchObject({ status: "ready", visualStatus: "unsupported", legacyOnly: true, visualMessage: expect.stringContaining("timeline") });
+  });
   it("rejects an anonymous workflow before using the database", async () => {
     const sql = {} as Sql;
     expect(await creatorWorkflowCreateResponse({ session: null, sql, body: { idempotencyKey: workflowId } })).toEqual({

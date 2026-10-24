@@ -62,7 +62,7 @@ type ExplanationProps = {
 
 function SilentExplanation(props: ExplanationProps & { fallbackMessage?: string }) {
   const { snapshot, controller } = useVisualPlayback(props.scene.durationMs);
-  return <ExplanationView {...props} snapshot={snapshot} controller={controller} mediaNote={props.fallbackMessage ?? "Silent authored demonstration. Captions and visual cues use the deterministic fallback clock."} />;
+  return <ExplanationView {...props} snapshot={snapshot} controller={controller} mediaNote={props.fallbackMessage ?? "Silent visual explanation. Captions and visual cues use the deterministic fallback clock."} />;
 }
 
 function NarratedExplanation(props: ExplanationProps & { narrationMedia: readonly NarrationMediaTrack[] }) {

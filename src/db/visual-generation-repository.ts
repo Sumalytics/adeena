@@ -39,8 +39,12 @@ export type VisualGenerationResult = {
   usage?: { callCount: number; inputTokens: number; outputTokens: number; actualCostMicros: number | null; commercialEstimateMicros: number | null; durationMs: number | null };
   replayed: boolean;
 };
+export type VisualGenerationView = VisualGenerationResult & {
+  internalStatus: "queued" | "planning" | "reviewing" | "ready" | "unsupported" | "failed";
+};
 
 const implemented = Object.entries(ARCHETYPE_REGISTRY).filter(([, value]) => value.renderer === "implemented").map(([id]) => id) as VisualDirectorInput["implementedArchetypes"];
+type JobRow = { id: string; status: string; association_id: string | null; failure_code: string | null; diagnostics: unknown; duration_ms: number | null };
 
 async function loadInput(sql: Sql, identity: VerifiedIdentity, workspaceId: string, experienceVersionId: string): Promise<VisualDirectorInput> {
   return withWorkspace(sql, identity, workspaceId, async ({ tx }) => {
@@ -73,6 +77,54 @@ async function loadInput(sql: Sql, identity: VerifiedIdentity, workspaceId: stri
   });
 }
 
+export async function enqueueVisualGeneration(input: { sql: Sql; identity: VerifiedIdentity; workspaceId: string; experienceVersionId: string; idempotencyKey: string } & Pick<Options, "env" | "schedules">): Promise<VisualGenerationView> {
+  if (!Uuid.safeParse(input.experienceVersionId).success || !Uuid.safeParse(input.idempotencyKey).success) throw new SourceError("invalid-generation");
+  const env = input.env ?? process.env;
+  const auth = configuredEditAuthorization(env, input.schedules);
+  if (!auth.ok) throw new SourceError(auth.code);
+  const free = "mode" in auth;
+  const schedule = free ? GROQ_COMMERCIAL_SCHEDULE : auth.spend;
+  const ceiling = ([GENERATION_LIMITS.visualPlan, GENERATION_LIMITS.visualReview] as const).reduce((sum, limit) => sum + (billedMicros(schedule, limit.input, 0, limit.output) ?? 2_000_000_000), 0);
+  await loadInput(input.sql, input.identity, input.workspaceId, input.experienceVersionId);
+  return withWorkspace(input.sql, input.identity, input.workspaceId, async (workspace) => {
+    const association = await workspace.tx<{ id: string; authored_fixture: boolean }[]>`select id::text,authored_fixture from visual_experience_blueprints where workspace_id=${input.workspaceId}::uuid and experience_version_id=${input.experienceVersionId}::uuid`;
+    if (association[0]?.authored_fixture) throw new SourceError("invalid-experience");
+    const created = randomUUID();
+    await workspace.tx`insert into visual_generation_jobs(id,workspace_id,experience_version_id,idempotency_key,provider,status,prompt_version,review_prompt_version,created_by)
+      values(${created}::uuid,${input.workspaceId}::uuid,${input.experienceVersionId}::uuid,${input.idempotencyKey}::uuid,'configured-provider','queued',${VISUAL_PLAN_PROMPT_VERSION},${VISUAL_REVIEW_PROMPT_VERSION},${workspace.userId}::uuid)
+      on conflict do nothing`;
+    const rows = await workspace.tx<JobRow[]>`select id::text,status,association_id::text,failure_code,diagnostics,duration_ms from visual_generation_jobs where workspace_id=${input.workspaceId}::uuid and experience_version_id=${input.experienceVersionId}::uuid`;
+    const job = rows[0];
+    if (!job) throw new SourceError("invalid-generation");
+    if (association[0]) return { ...present(job, true), status: "ready", associationId: association[0].id, internalStatus: "ready" };
+    if (!free && ceiling > auth.spend.maxEditMicros && job.status === "queued") {
+      const diagnostics = [{ code: "budget-unavailable", message: "The authorized per-generation limit does not cover the bounded visual-generation operation." }];
+      await workspace.tx`update visual_generation_jobs set status='failed',failure_code='budget-unavailable',diagnostics=${JSON.stringify(diagnostics)}::jsonb,updated_at=now() where id=${job.id}::uuid`;
+      return { ...present({ ...job, status: "failed", failure_code: "budget-unavailable", diagnostics }, job.id !== created), internalStatus: "failed" };
+    }
+    return { ...present(job, job.id !== created), internalStatus: asInternalStatus(job.status) };
+  });
+}
+
+export async function readVisualGeneration(input: { sql: Sql; identity: VerifiedIdentity; workspaceId: string; experienceVersionId: string }): Promise<VisualGenerationView | null> {
+  if (!Uuid.safeParse(input.experienceVersionId).success) throw new SourceError("invalid-generation");
+  return withWorkspace(input.sql, input.identity, input.workspaceId, async ({ tx }) => {
+    await tx`update visual_generation_jobs set status='failed',failure_code='provider-unavailable',diagnostics='[{"code":"provider-unavailable","message":"Visual generation did not finish before its bounded worker window closed."}]'::jsonb,updated_at=now()
+      where workspace_id=${input.workspaceId}::uuid and experience_version_id=${input.experienceVersionId}::uuid
+        and status in ('queued','planning','reviewing') and updated_at < now()-interval '4 minutes'`;
+    const rows = await tx<JobRow[]>`select id::text,status,association_id::text,failure_code,diagnostics,duration_ms from visual_generation_jobs where workspace_id=${input.workspaceId}::uuid and experience_version_id=${input.experienceVersionId}::uuid`;
+    const job = rows[0];
+    return job ? { ...present(job, true), internalStatus: asInternalStatus(job.status) } : null;
+  });
+}
+
+export async function failVisualGeneration(input: { sql: Sql; identity: VerifiedIdentity; workspaceId: string; experienceVersionId: string; code: "budget-unavailable" | "provider-unavailable" }) {
+  return withWorkspace(input.sql, input.identity, input.workspaceId, async ({ tx }) => {
+    await tx`update visual_generation_jobs set status='failed',failure_code=${input.code},diagnostics=${JSON.stringify([{ code: input.code, message: "The bounded visual-generation worker could not complete this operation." }])}::jsonb,updated_at=now()
+      where workspace_id=${input.workspaceId}::uuid and experience_version_id=${input.experienceVersionId}::uuid and status in ('queued','planning','reviewing')`;
+  });
+}
+
 export async function generateVisualExperience(input: { sql: Sql; identity: VerifiedIdentity; workspaceId: string; experienceVersionId: string; idempotencyKey: string } & Options): Promise<VisualGenerationResult> {
   const started = Date.now();
   if (!Uuid.safeParse(input.experienceVersionId).success || !Uuid.safeParse(input.idempotencyKey).success) throw new SourceError("invalid-generation");
@@ -80,6 +132,7 @@ export async function generateVisualExperience(input: { sql: Sql; identity: Veri
   const auth = configuredEditAuthorization(env, input.schedules);
   if (!auth.ok) throw new SourceError(auth.code);
   const directorInput = await loadInput(input.sql, input.identity, input.workspaceId, input.experienceVersionId);
+  await enqueueVisualGeneration(input);
   const free = "mode" in auth;
   const model = free ? auth.model : auth.spend.model;
   const price = free ? auth.priceVersion : auth.spend.priceVersion;
@@ -89,11 +142,7 @@ export async function generateVisualExperience(input: { sql: Sql; identity: Veri
   const claim = await withWorkspace(input.sql, input.identity, input.workspaceId, async (workspace) => {
     const association = await workspace.tx<{ id: string; authored_fixture: boolean }[]>`select id::text,authored_fixture from visual_experience_blueprints where workspace_id=${input.workspaceId}::uuid and experience_version_id=${input.experienceVersionId}::uuid`;
     if (association[0]?.authored_fixture) throw new SourceError("invalid-experience");
-    const created = randomUUID();
-    await workspace.tx`insert into visual_generation_jobs(id,workspace_id,experience_version_id,idempotency_key,provider,status,prompt_version,review_prompt_version,created_by)
-      values(${created}::uuid,${input.workspaceId}::uuid,${input.experienceVersionId}::uuid,${input.idempotencyKey}::uuid,'configured-provider','queued',${VISUAL_PLAN_PROMPT_VERSION},${VISUAL_REVIEW_PROMPT_VERSION},${workspace.userId}::uuid)
-      on conflict do nothing`;
-    const rows = await workspace.tx<{ id: string; status: string; association_id: string | null; failure_code: string | null; diagnostics: unknown; duration_ms: number | null }[]>`select id::text,status,association_id::text,failure_code,diagnostics,duration_ms from visual_generation_jobs where workspace_id=${input.workspaceId}::uuid and experience_version_id=${input.experienceVersionId}::uuid for update`;
+    const rows = await workspace.tx<JobRow[]>`select id::text,status,association_id::text,failure_code,diagnostics,duration_ms from visual_generation_jobs where workspace_id=${input.workspaceId}::uuid and experience_version_id=${input.experienceVersionId}::uuid for update`;
     const job = rows[0];
     if (!job) throw new SourceError("invalid-generation");
     if (association[0]) return { kind: "terminal" as const, result: { jobId: job.id, status: "ready" as const, associationId: association[0].id, replayed: true } };
@@ -134,7 +183,10 @@ export async function generateVisualExperience(input: { sql: Sql; identity: Veri
         } else if (validated.status === "unsupported-visual-treatment") {
           finalStatus = "unsupported";
           failureCode = "unsupported-visual-treatment";
-          diagnostics = [{ code: failureCode, message: validated.proposal.reason }];
+          diagnostics = [
+            { code: failureCode, message: validated.proposal.reason },
+            { code: "required-capability", message: validated.proposal.requiredCapability },
+          ];
         } else {
           await withWorkspace(input.sql, input.identity, input.workspaceId, async ({ tx }) => { await tx`update visual_generation_jobs set status='reviewing',updated_at=now() where id=${claim.jobId}::uuid`; });
           const reviewed = await requestVisualDirectorStage({ kind: "visualReview", directorInput, proposal, env, fetchImpl: input.fetchImpl, schedules: input.schedules });
@@ -179,4 +231,8 @@ function present(job: { id: string; status: string; association_id: string | nul
   const status = job.status === "ready" ? "ready" : job.status === "unsupported" ? "unsupported-visual-treatment" : job.status === "failed" ? "rejected" : "in-progress";
   const diagnostics = Array.isArray(job.diagnostics) ? job.diagnostics.flatMap((item) => item && typeof item === "object" && "code" in item && "message" in item ? [{ code: String(item.code), message: String(item.message) }] : []) : undefined;
   return { jobId: job.id, status, associationId: job.association_id ?? undefined, reason: job.failure_code ?? undefined, diagnostics, replayed };
+}
+
+function asInternalStatus(status: string): VisualGenerationView["internalStatus"] {
+  return status === "queued" || status === "planning" || status === "reviewing" || status === "ready" || status === "unsupported" ? status : "failed";
 }

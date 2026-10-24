@@ -30,6 +30,13 @@ export type CreatorExperienceView = {
   previewPath: string | null;
 };
 
+export type CreatorGenerationJourney = CreatorExperienceView & {
+  visualStatus: "not-requested" | "queued" | "planning" | "reviewing" | "ready" | "unsupported" | "failed";
+  stageLabel: "Creating your experience" | "Preparing animated explanation" | "Checking the learning content" | "Ready to preview" | "Visual generation unavailable";
+  visualMessage: string | null;
+  legacyOnly: boolean;
+};
+
 export type CreatorDraftSummary = {
   id: string;
   title: string;

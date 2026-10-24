@@ -52,6 +52,10 @@ export async function WorkflowSession({ params }: { params: Promise<{ workflowId
         failureCode: read.body.generation.failureCode,
         previewPath: read.body.generation.previewPath,
         liveModel: read.body.generation.liveModel,
+        visualStatus: read.body.generation.visualStatus,
+        stageLabel: read.body.generation.stageLabel,
+        visualMessage: read.body.generation.visualMessage,
+        legacyOnly: read.body.generation.legacyOnly,
       };
     }
   }

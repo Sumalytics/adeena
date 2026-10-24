@@ -66,6 +66,7 @@ export function validateVisualDirectorProposal(value: unknown, input: VisualDire
   if (contradictoryEvidence(plan.learningOutcomes.map((outcome) => outcome.evidence.quote))) diagnostics.push({ code: "grounding.contradictory-source", path: ["plan", "learningOutcomes"], message: "The selected evidence contains contradictory statements and needs review." });
   const scenePlans = new Map(plan.scenes.map((scene) => [scene.blueprintSceneId, scene]));
   if (scenePlans.size !== plan.scenes.length || !exactCoverage(proposal.blueprint.scenes.map((scene) => scene.id), plan.scenes.map((scene) => scene.blueprintSceneId))) diagnostics.push({ code: "plan.scene-coverage", path: ["plan", "scenes"], message: "Every blueprint scene needs exactly one instructional-plan entry." });
+  if (!proposal.blueprint.scenes.some((scene) => scene.interaction)) diagnostics.push({ code: "practice.missing", path: ["blueprint", "scenes"], message: "An interactive visual experience needs at least one supported practice interaction." });
   for (const [sceneIndex, scene] of proposal.blueprint.scenes.entries()) {
     const planned = scenePlans.get(scene.id);
     if (!planned) continue;
@@ -79,6 +80,10 @@ export function validateVisualDirectorProposal(value: unknown, input: VisualDire
     if (!exactCoverage(scene.cues.map((item) => item.id), planned.cueEvidence.map((item) => item.elementId))) diagnostics.push({ code: "grounding.cue-coverage", path: ["plan", "scenes", sceneIndex, "cueEvidence"], message: "Every animation cue needs evidence." });
     if (!exactCoverage(scene.narration.map((item) => item.id), planned.narrationEvidence.map((item) => item.elementId))) diagnostics.push({ code: "grounding.narration-coverage", path: ["plan", "scenes", sceneIndex, "narrationEvidence"], message: "Every narration segment needs evidence." });
     if ((scene.interaction?.id ?? null) !== (planned.interactionEvidence?.elementId ?? null)) diagnostics.push({ code: "grounding.practice-coverage", path: ["plan", "scenes", sceneIndex, "interactionEvidence"], message: "Practice must be explicitly tied to source evidence." });
+    if (scene.interaction) {
+      const supported = scene.interaction.kind === "sequence-steps" || scene.interaction.kind === "classify" || (scene.interaction.kind === "calculate" && scene.interaction.answerSpec.operation === "two-set-cardinality");
+      if (!supported) diagnostics.push({ code: "practice.not-implemented", path: ["blueprint", "scenes", sceneIndex, "interaction"], message: "The current player does not implement this practice mechanic." });
+    }
     for (const narration of scene.narration) if (ageMismatch(input.source.ageBand, narration.text)) diagnostics.push({ code: "audience.language", path: ["blueprint", "scenes", sceneIndex, "narration"], message: "Narration sentence length does not match the selected young age band." });
   }
   const mapping = VisualSceneMappingV1.safeParse(proposal.mapping);

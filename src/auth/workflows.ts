@@ -4,6 +4,7 @@ import { AUDIENCE_OPTIONS } from "@/app/studio/studio-form";
 import { AgeBand, Uuid } from "@/contracts/common";
 import { ensureIndividualWorkspace } from "@/db/creator";
 import { createPlayableExperience, readPlayableGeneration, resumePlayableExperience } from "@/db/experience-repository";
+import { enqueueVisualGeneration, failVisualGeneration, generateVisualExperience, readVisualGeneration, type VisualGenerationView } from "@/db/visual-generation-repository";
 import type { VerifiedIdentity } from "@/db/identity";
 import {
   createCreatorWorkflow,
@@ -18,7 +19,8 @@ import {
   selectWorkflowSource,
   selectWorkflowTopic,
 } from "@/db/workflow-repository";
-import { FIXTURE_PROVIDER, CONFIGURED_PROVIDER, configuredEditAuthorization, closedProviderError, selectGenerationProvider } from "@/experience/provider";
+import { FIXTURE_PROVIDER, CONFIGURED_PROVIDER, configuredEditAuthorization, closedProviderError, selectGenerationProvider, type ProviderEnv, type RateSchedule } from "@/experience/provider";
+import type { CreatorExperienceView, CreatorGenerationJourney } from "@/experience/public";
 import { SourceError } from "@/source/errors";
 import { creatorDatabase } from "./database";
 import { requestOriginAllowed } from "./password-post";
@@ -192,14 +194,22 @@ export async function creatorWorkflowGenerationReadResponse(input: {
       workspaceId: workspace.workspaceId,
       workflowId: input.workflowId,
     });
-    const generation = await readPlayableGeneration({
+    const base = await readPlayableGeneration({
       sql: input.sql,
       identity: input.session.identity,
       workspaceId: workspace.workspaceId,
       jobId: workflow.generationJobId,
       idempotencyKey: workflow.generationIdempotencyKey,
     });
-    return { status: 200 as const, body: { workflow, generation } };
+    if (!base) return { status: 200 as const, body: { workflow, generation: null } };
+    const visual = base.status === "ready" && base.experienceVersionId && base.provider === CONFIGURED_PROVIDER
+      ? await readVisualGeneration({ sql: input.sql, identity: input.session.identity, workspaceId: workspace.workspaceId, experienceVersionId: base.experienceVersionId })
+      : null;
+    const generation = creatorGenerationJourney(base, visual);
+    const recorded = generation.status === "ready" && generation.experienceVersionId && !workflow.experienceVersionId
+      ? await recordWorkflowGeneration({ sql: input.sql, identity: input.session.identity, workspaceId: workspace.workspaceId, workflowId: input.workflowId, jobId: generation.jobId, experienceVersionId: generation.experienceVersionId })
+      : workflow;
+    return { status: 200 as const, body: { workflow: recorded, generation } };
   } catch (error) {
     return failure(error);
   }
@@ -211,7 +221,9 @@ export async function creatorWorkflowGenerateResponse(input: {
   workflowId: string;
   body: unknown;
   provider?: typeof FIXTURE_PROVIDER | typeof CONFIGURED_PROVIDER;
-  env?: Record<string, string | undefined>;
+  env?: ProviderEnv;
+  fetchImpl?: typeof fetch;
+  schedules?: Record<string, RateSchedule>;
 }) {
   if (!input.session) return { status: 401 as const, body: { error: "unauthenticated" } };
   if (!Uuid.safeParse(input.workflowId).success) return { status: 400 as const, body: { error: "invalid-workflow" } };
@@ -242,7 +254,7 @@ export async function creatorWorkflowGenerateResponse(input: {
       workspaceId: workspace.workspaceId,
     };
     let view = reserved.generationJobId
-      ? await resumePlayableExperience({ ...shared, jobId: reserved.generationJobId, env })
+      ? await resumePlayableExperience({ ...shared, jobId: reserved.generationJobId, env, fetchImpl: input.fetchImpl, schedules: input.schedules })
       : await createPlayableExperience({
         ...shared,
         documentVersionId: reserved.documentVersionId,
@@ -251,18 +263,44 @@ export async function creatorWorkflowGenerateResponse(input: {
         ageBand: reserved.ageBand,
         idempotencyKey: reserved.generationIdempotencyKey,
         authorizeGeneration: true,
-        provider, env,
+        provider, env, fetchImpl: input.fetchImpl, schedules: input.schedules,
       });
     for (let attempt = 0; attempt < 4 && view.status !== "ready" && view.status !== "failed" && view.status !== "cancelled"; attempt += 1) {
-      view = await resumePlayableExperience({ ...shared, jobId: view.jobId, env });
+      view = await resumePlayableExperience({ ...shared, jobId: view.jobId, env, fetchImpl: input.fetchImpl, schedules: input.schedules });
     }
+    let visual: VisualGenerationView | null = null;
+    let background: (() => Promise<void>) | undefined;
+    if (view.status === "ready" && view.experienceVersionId && provider === CONFIGURED_PROVIDER) {
+      try {
+        visual = await enqueueVisualGeneration({ ...shared, experienceVersionId: view.experienceVersionId, idempotencyKey: reserved.generationIdempotencyKey, env, schedules: input.schedules });
+        if (visual.internalStatus === "queued" && !visual.replayed) {
+          const versionId = view.experienceVersionId;
+          const jobId = view.jobId;
+          const generationIdempotencyKey = reserved.generationIdempotencyKey;
+          background = async () => {
+            try {
+              await generateVisualExperience({ ...shared, experienceVersionId: versionId, idempotencyKey: generationIdempotencyKey, env, fetchImpl: input.fetchImpl, schedules: input.schedules });
+            } catch (error) {
+              const code = error instanceof SourceError && error.code === "budget-unavailable" ? "budget-unavailable" : "provider-unavailable";
+              await failVisualGeneration({ ...shared, experienceVersionId: versionId, code });
+            } finally {
+              await recordWorkflowGeneration({ ...shared, workflowId: input.workflowId, jobId, experienceVersionId: versionId });
+            }
+          };
+        }
+      } catch (error) {
+        if (!(error instanceof SourceError)) throw error;
+        visual = null;
+      }
+    }
+    const generation = creatorGenerationJourney(view, visual);
     const recorded = await recordWorkflowGeneration({
       ...shared,
       workflowId: input.workflowId,
       jobId: view.jobId,
-      experienceVersionId: view.experienceVersionId,
+      experienceVersionId: generation.status === "ready" ? generation.experienceVersionId : null,
     });
-    return { status: view.status === "ready" ? 200 as const : 202 as const, body: { workflow: recorded, generation: view } };
+    return { status: generation.status === "ready" ? 200 as const : 202 as const, body: { workflow: recorded, generation }, background };
   } catch (error) {
     if (error instanceof SourceError && reserved?.generationIdempotencyKey) {
       try {
@@ -299,6 +337,22 @@ export async function creatorWorkflowGenerateResponse(input: {
     }
     return generateFailure(error);
   }
+}
+
+export function creatorGenerationJourney(base: CreatorExperienceView, visual: VisualGenerationView | null): CreatorGenerationJourney {
+  if (base.status !== "ready") return { ...base, visualStatus: "not-requested", stageLabel: base.status === "validating" ? "Checking the learning content" : "Creating your experience", visualMessage: null, legacyOnly: false };
+  if (base.provider !== CONFIGURED_PROVIDER) return { ...base, visualStatus: "not-requested", stageLabel: "Ready to preview", visualMessage: "This development draft uses the deterministic game fixture. No AI-directed animation was generated.", legacyOnly: true };
+  if (!visual) return { ...base, visualStatus: "failed", stageLabel: "Visual generation unavailable", visualMessage: "The animated explanation could not be prepared. The validated original playable draft remains available.", legacyOnly: true };
+  if (visual.internalStatus === "queued" || visual.internalStatus === "planning") return { ...base, status: "compiling", previewPath: null, visualStatus: visual.internalStatus, stageLabel: "Preparing animated explanation", visualMessage: null, legacyOnly: false };
+  if (visual.internalStatus === "reviewing") return { ...base, status: "validating", previewPath: null, visualStatus: "reviewing", stageLabel: "Checking the learning content", visualMessage: null, legacyOnly: false };
+  if (visual.internalStatus === "ready") return { ...base, visualStatus: "ready", stageLabel: "Ready to preview", visualMessage: null, legacyOnly: false };
+  if (visual.internalStatus === "unsupported") {
+    const capability = visual.diagnostics?.find((item) => item.code === "required-capability")?.message;
+    const treatment = capability === "timeline-sequence@1" ? "a timeline treatment" : capability === "spatial-regions@1" ? "a spatial-regions treatment" : "a visual treatment";
+    return { ...base, visualStatus: "unsupported", stageLabel: "Visual generation unavailable", visualMessage: `This topic needs ${treatment} that the current player does not support yet. The validated original playable draft is available.`, legacyOnly: true };
+  }
+  if (visual.reason === "budget-unavailable") return { ...base, visualStatus: "failed", stageLabel: "Visual generation unavailable", visualMessage: "The authorized animation budget is too low for this bounded operation. The validated original playable draft is available.", legacyOnly: true };
+  return { ...base, visualStatus: "failed", stageLabel: "Visual generation unavailable", visualMessage: "The animated explanation did not pass its source and learning checks. The validated original playable draft is available.", legacyOnly: true };
 }
 
 export async function creatorWorkflowForPreview(identity: VerifiedIdentity, versionId: string, parentVersionId: string | null) {

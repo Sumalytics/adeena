@@ -21,7 +21,7 @@ export async function generateModelPlan(input: Input): Promise<Compilation> {
   const model = free ? auth.model : auth.spend.model;
   const price = free ? auth.priceVersion : auth.spend.priceVersion;
   const schedule = free ? GROQ_COMMERCIAL_SCHEDULE : auth.spend;
-  const ceiling = Object.values(GENERATION_LIMITS).reduce((sum, limit) => sum + (billedMicros(schedule, limit.input, 0, limit.output) ?? 2_000_000_000), 0);
+  const ceiling = ([GENERATION_LIMITS.plan, GENERATION_LIMITS.review] as const).reduce((sum, limit) => sum + (billedMicros(schedule, limit.input, 0, limit.output) ?? 2_000_000_000), 0);
   if (!free && ceiling > auth.spend.maxEditMicros) return { ...rejected("budget-unavailable", "The complete generation exceeds the authorized operation ceiling."), code: "budget-unavailable" };
   // Reserve both bounded calls before any network request. The durable reservation
   // prevents a retry or expired lease from issuing another billed generation.
