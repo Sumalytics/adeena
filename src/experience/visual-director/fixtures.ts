@@ -57,7 +57,7 @@ export const authoredTwoSetFixture: VisualLearningBlueprint = {
       { id: "define-overlap", text: "The overlap contains elements that belong to both sets.", caption: "The overlap contains elements that belong to both sets.", onScreenText: "The intersection belongs to both sets.", startMs: 0, durationMs: 6_000, cueIds: ["reveal-regions"], sourceSpanIds: [setsSpan] },
       { id: "count-union", text: "Add both set counts, then subtract the intersection once to avoid double-counting it.", caption: "Add both set counts, then subtract the intersection once to avoid double-counting it.", onScreenText: "Union equals A plus B minus the intersection.", startMs: 6_000, durationMs: 9_000, cueIds: ["place-overlap"], sourceSpanIds: [setsSpan] },
     ],
-    interaction: { id: "calculate-union", kind: "calculate", prompt: "Calculate the union and the number in neither set.", answerSpec: { operation: "two-set-cardinality", setACount: 18, setBCount: 14, intersectionCount: 6, unionCount: 26, totalCount: 30, neitherCount: 4 }, feedback, sourceSpanIds: [setsSpan] },
+    interaction: { id: "calculate-union", kind: "calculate", prompt: "Place each calculated value in its correct region.", answerSpec: { operation: "two-set-cardinality", setACount: 18, setBCount: 14, intersectionCount: 6, unionCount: 26, totalCount: 30, neitherCount: 4 }, feedback: { correct: "Each value is in the region supported by the set counts.", incorrect: "Check the overlap once, then place the remaining values without double-counting it." }, sourceSpanIds: [setsSpan] },
   }],
 };
 

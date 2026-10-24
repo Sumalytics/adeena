@@ -235,7 +235,11 @@ function validateInteraction(scene: z.infer<typeof VisualScene>, objectIds: Set<
     interaction.itemIds.forEach(requireObject); interaction.correctOrder.forEach(requireObject);
     if (new Set(interaction.correctOrder).size !== interaction.itemIds.length || interaction.itemIds.some((id) => !interaction.correctOrder.includes(id))) add("practice.sequence", p, "Correct order must contain every sequence item exactly once.");
   }
-  if (interaction.kind === "classify") { interaction.itemIds.forEach(requireObject); interaction.regionIds.forEach(requireObject); interaction.placements.forEach(({ itemId, regionId }) => { requireObject(itemId); requireObject(regionId); }); }
+  if (interaction.kind === "classify") {
+    interaction.itemIds.forEach(requireObject); interaction.regionIds.forEach(requireObject); interaction.placements.forEach(({ itemId, regionId }) => { requireObject(itemId); requireObject(regionId); });
+    const placedItems = interaction.placements.map((placement) => placement.itemId);
+    if (new Set(placedItems).size !== interaction.itemIds.length || interaction.itemIds.some((id) => !placedItems.includes(id)) || interaction.placements.some(({ itemId, regionId }) => !interaction.itemIds.includes(itemId) || !interaction.regionIds.includes(regionId))) add("practice.classify", p, "Classification rules must place every declared item exactly once into a declared region.");
+  }
   if (interaction.kind === "sort") {
     interaction.itemIds.forEach(requireObject);
     if (Object.keys(interaction.rankByItemId).length !== interaction.itemIds.length || interaction.itemIds.some((id) => interaction.rankByItemId[id] === undefined) || new Set(Object.values(interaction.rankByItemId)).size !== interaction.itemIds.length) add("practice.sort", p, "Sort ranks must assign every item a distinct rank.");

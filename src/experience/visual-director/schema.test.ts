@@ -100,6 +100,16 @@ describe("Visual Director v1 contract", () => {
     expect(codes(validateVisualBlueprint(badIntersection, authoredFixtureContexts.sets))).toContain("math.two-set-cardinality");
   });
 
+  it("rejects incomplete or unauthorized classification answer rules", () => {
+    const invalid = clone(authoredTwoSetFixture) as unknown as { scenes: Array<{ interaction: unknown }> };
+    invalid.scenes[0].interaction = {
+      id: "classify-values", kind: "classify", prompt: "Place the value.",
+      itemIds: ["overlap-count"], regionIds: ["both", "a-only"], placements: [{ itemId: "overlap-count", regionId: "outside" }],
+      feedback: { correct: "Correct.", incorrect: "Try again." }, sourceSpanIds: authoredTwoSetFixture.scenes[0].sourceSpanIds,
+    };
+    expect(codes(validateVisualBlueprint(invalid, authoredFixtureContexts.sets))).toContain("practice.classify");
+  });
+
   it("rejects executable text, locators, missing provenance and mismatched audience context", () => {
     for (const text of ["<script>alert(1)</script>", "javascript:alert(1)", "https://untrusted.example/asset.png"]) {
       const unsafe = clone(authoredProcessFixture);

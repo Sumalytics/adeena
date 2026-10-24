@@ -5,14 +5,18 @@ import type { VisualScene } from "./schema";
 import { SceneStage } from "./scene-renderer";
 import { frameAt } from "./timeline";
 import { useVisualPlayback } from "./use-visual-playback";
+import { buildPracticeChallenge } from "./practice";
+import { PracticeStage } from "./practice-stage";
 import styles from "./visual-director.module.css";
 
 export function VisualScenePlayer({ scene, reducedMotion: controlledReducedMotion }: { scene: VisualScene; reducedMotion?: boolean }) {
   const { snapshot, controller } = useVisualPlayback(scene.durationMs);
   const [localReducedMotion, setLocalReducedMotion] = useState(false);
+  const [mode, setMode] = useState<"explanation" | "practice">("explanation");
   const reducedMotion = controlledReducedMotion ?? localReducedMotion;
   const frame = frameAt(scene, snapshot.timeMs, { reducedMotion });
   const progressLabel = `${formatTime(snapshot.timeMs)} of ${formatTime(scene.durationMs)}`;
+  const practiceAvailable = buildPracticeChallenge(scene) !== null;
 
   useEffect(() => {
     const query = window.matchMedia("(prefers-reduced-motion: reduce)");
@@ -21,6 +25,29 @@ export function VisualScenePlayer({ scene, reducedMotion: controlledReducedMotio
     query.addEventListener("change", update);
     return () => query.removeEventListener("change", update);
   }, []);
+
+  const beginPractice = () => {
+    controller.pause();
+    controller.seek(scene.durationMs);
+    setMode("practice");
+  };
+
+  const watchAgain = () => {
+    setMode("explanation");
+    controller.restart(false);
+  };
+
+  if (mode === "practice") {
+    return (
+      <section className={styles.player} aria-label="Interactive practice player">
+        <PracticeStage scene={scene} reducedMotion={reducedMotion} onWatchAgain={watchAgain} />
+        <div className={styles.practiceToolbar}>
+          <button type="button" onClick={watchAgain}>Back to explanation</button>
+          {controlledReducedMotion === undefined ? <label className={styles.motionToggle}><input type="checkbox" checked={reducedMotion} onChange={(event) => setLocalReducedMotion(event.currentTarget.checked)} /> Reduced motion</label> : null}
+        </div>
+      </section>
+    );
+  }
 
   return (
     <section className={styles.player} aria-label="Visual explanation player">
@@ -32,6 +59,7 @@ export function VisualScenePlayer({ scene, reducedMotion: controlledReducedMotio
       <div className={styles.transport}>
         <button type="button" onClick={() => snapshot.status === "playing" ? controller.pause() : controller.play()}>{snapshot.status === "playing" ? "Pause" : snapshot.status === "paused" ? "Resume" : "Play"}</button>
         <button type="button" onClick={() => controller.restart(true)}>Restart</button>
+        {practiceAvailable ? <button type="button" className={styles.practiceButton} onClick={beginPractice}>Start practice</button> : null}
         <label className={styles.scrubber}>
           <span>Position</span>
           <input aria-label="Animation position" type="range" min="0" max={scene.durationMs} step="100" value={snapshot.timeMs} onChange={(event) => controller.seek(Number(event.currentTarget.value))} />
