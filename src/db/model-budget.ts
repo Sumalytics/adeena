@@ -1,15 +1,20 @@
 import { randomUUID } from "node:crypto";
 import type { AuthorizedWorkspace } from "./authz";
+type BudgetScope = Pick<AuthorizedWorkspace, "tx">;
 const FREE_SESSION_ID = randomUUID();
-export async function releaseUnusedFreeRequests(workspace: AuthorizedWorkspace, count: number, jobId: string) {
+export async function releaseUnusedFreeRequests(workspace: BudgetScope, count: number, jobId: string, source: "experience" | "visual" = "experience") {
   if (count <= 0) return;
+  const created = source === "visual"
+    ? await workspace.tx<{ day: string }[]>`select to_char((created_at at time zone 'utc')::date,'YYYY-MM-DD') as day from visual_generation_costs where job_id=${jobId}::uuid`
+    : await workspace.tx<{ day: string }[]>`select to_char((created_at at time zone 'utc')::date,'YYYY-MM-DD') as day from experience_generation_costs where job_id=${jobId}::uuid`;
+  const usageDay = created[0]?.day ?? "";
   await workspace.tx`update adeena_free_quota set
     session_requests = case when session_id=${FREE_SESSION_ID} then greatest(0,session_requests-${count}) else session_requests end,
-    day_requests = case when usage_day=(select (created_at at time zone 'utc')::date from experience_generation_costs where job_id=${jobId}::uuid) then greatest(0,day_requests-${count}) else day_requests end,
+    day_requests = case when to_char(usage_day,'YYYY-MM-DD')=${usageDay} then greatest(0,day_requests-${count}) else day_requests end,
     updated_at=now() where id='development'`;
 }
 export async function claimFreeRequest(
-  workspace: AuthorizedWorkspace,
+  workspace: BudgetScope,
   sessionLimit: number,
   dayLimit: number,
   locked?: { session_id: string; session_requests: number; day_requests: number; usage_day: string },
@@ -35,7 +40,7 @@ export async function claimFreeRequest(
   return true;
 }
 
-export async function reserveAnotherEstimate(workspace: AuthorizedWorkspace, estimatedMicros: number, spendCapMicros: number) {
+export async function reserveAnotherEstimate(workspace: BudgetScope, estimatedMicros: number, spendCapMicros: number) {
   const locked = await workspace.tx<{ reserved_micros: number }[]>`
     select reserved_micros::int from adeena_edit_spend where id = 'development' for update
   `;
@@ -49,7 +54,7 @@ export async function reserveAnotherEstimate(workspace: AuthorizedWorkspace, est
   return true;
 }
 
-export async function reconcileReservation(workspace: AuthorizedWorkspace, reservedMicros: number, keptMicros: number) {
+export async function reconcileReservation(workspace: BudgetScope, reservedMicros: number, keptMicros: number) {
   const delta = keptMicros - reservedMicros;
   await workspace.tx`select reserved_micros from adeena_edit_spend where id = 'development' for update`;
   await workspace.tx`

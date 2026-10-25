@@ -4,7 +4,7 @@ import { AUDIENCE_OPTIONS } from "@/app/studio/studio-form";
 import { AgeBand, Uuid } from "@/contracts/common";
 import { ensureIndividualWorkspace } from "@/db/creator";
 import { createPlayableExperience, readPlayableGeneration, resumePlayableExperience } from "@/db/experience-repository";
-import { enqueueVisualGeneration, failVisualGeneration, generateVisualExperience, readVisualGeneration, type VisualGenerationView } from "@/db/visual-generation-repository";
+import { enqueueVisualGeneration, readVisualGeneration, type VisualGenerationView } from "@/db/visual-generation-repository";
 import type { VerifiedIdentity } from "@/db/identity";
 import {
   createCreatorWorkflow,
@@ -269,25 +269,9 @@ export async function creatorWorkflowGenerateResponse(input: {
       view = await resumePlayableExperience({ ...shared, jobId: view.jobId, env, fetchImpl: input.fetchImpl, schedules: input.schedules });
     }
     let visual: VisualGenerationView | null = null;
-    let background: (() => Promise<void>) | undefined;
     if (view.status === "ready" && view.experienceVersionId && provider === CONFIGURED_PROVIDER) {
       try {
         visual = await enqueueVisualGeneration({ ...shared, experienceVersionId: view.experienceVersionId, idempotencyKey: reserved.generationIdempotencyKey, env, schedules: input.schedules });
-        if (visual.internalStatus === "queued" && !visual.replayed) {
-          const versionId = view.experienceVersionId;
-          const jobId = view.jobId;
-          const generationIdempotencyKey = reserved.generationIdempotencyKey;
-          background = async () => {
-            try {
-              await generateVisualExperience({ ...shared, experienceVersionId: versionId, idempotencyKey: generationIdempotencyKey, env, fetchImpl: input.fetchImpl, schedules: input.schedules });
-            } catch (error) {
-              const code = error instanceof SourceError && error.code === "budget-unavailable" ? "budget-unavailable" : "provider-unavailable";
-              await failVisualGeneration({ ...shared, experienceVersionId: versionId, code });
-            } finally {
-              await recordWorkflowGeneration({ ...shared, workflowId: input.workflowId, jobId, experienceVersionId: versionId });
-            }
-          };
-        }
       } catch (error) {
         if (!(error instanceof SourceError)) throw error;
         visual = null;
@@ -300,7 +284,7 @@ export async function creatorWorkflowGenerateResponse(input: {
       jobId: view.jobId,
       experienceVersionId: generation.status === "ready" ? generation.experienceVersionId : null,
     });
-    return { status: generation.status === "ready" ? 200 as const : 202 as const, body: { workflow: recorded, generation }, background };
+    return { status: generation.status === "ready" ? 200 as const : 202 as const, body: { workflow: recorded, generation } };
   } catch (error) {
     if (error instanceof SourceError && reserved?.generationIdempotencyKey) {
       try {

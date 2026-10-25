@@ -12,7 +12,9 @@
     "lint": "eslint",
     "typecheck": "tsc --noEmit && tsc --noEmit -p packages/experience-schema && tsc --noEmit -p packages/player-core",
     "test": "vitest run",
-    "test:live": "vitest run --config vitest.live.config.mts"
+    "test:live": "vitest run --config vitest.live.config.mts",
+    "build:worker:visual": "vite build --config vite.visual-worker.config.mts",
+    "worker:visual": "npm run build:worker:visual && node .local/visual-worker/visual-generation-worker.mjs"
   },
   "dependencies": {
     "@supabase/ssr": "^0.12.7",

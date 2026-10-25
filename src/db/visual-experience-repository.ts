@@ -37,12 +37,18 @@ export async function associateVisualExperience(input: {
   sql: Sql; identity: VerifiedIdentity; workspaceId: string; experienceVersionId: string; blueprint: unknown;
   context: unknown; mapping: unknown; authoredFixture?: boolean; fixtureLabel?: string | null;
 }) {
-  const context = StoredVisualContextV1.parse(input.context);
-  const mapping = VisualSceneMappingV1.parse(input.mapping);
-  const validated = validateVisualBlueprint(input.blueprint, context);
-  if (!validated.ok) throw new SourceError("invalid-experience");
-  return withWorkspace(input.sql, input.identity, input.workspaceId, async (workspace) => {
-    const rows = await workspace.tx<{ manifest: unknown; source_span_ids: unknown }[]>`select manifest,source_span_ids from experience_versions where id=${input.experienceVersionId}::uuid and workspace_id=${input.workspaceId}::uuid`;
+  return withWorkspace(input.sql, input.identity, input.workspaceId, (workspace) => associateVisualExperienceInScope({ ...input, tx: workspace.tx, userId: workspace.userId }));
+}
+
+export async function associateVisualExperienceInScope(input: {
+  tx: Sql; userId: string; workspaceId: string; experienceVersionId: string; blueprint: unknown;
+  context: unknown; mapping: unknown; authoredFixture?: boolean; fixtureLabel?: string | null;
+}) {
+    const context = StoredVisualContextV1.parse(input.context);
+    const mapping = VisualSceneMappingV1.parse(input.mapping);
+    const validated = validateVisualBlueprint(input.blueprint, context);
+    if (!validated.ok) throw new SourceError("invalid-experience");
+    const rows = await input.tx<{ manifest: unknown; source_span_ids: unknown }[]>`select manifest,source_span_ids from experience_versions where id=${input.experienceVersionId}::uuid and workspace_id=${input.workspaceId}::uuid`;
     const version = rows[0];
     const manifest = parseManifest(version?.manifest);
     if (!version || !manifest.ok || !mappingIsValid(mapping, validated.blueprint, manifest.manifest)) throw new SourceError("invalid-experience");
@@ -50,20 +56,19 @@ export async function associateVisualExperience(input: {
     if (context.sourceSpanIds.some((id) => !versionSpans.has(id))) throw new SourceError("invalid-experience");
     const blueprintHash = hash(validated.blueprint);
     const id = randomUUID();
-    const inserted = await workspace.tx<{ id: string }[]>`insert into visual_experience_blueprints(
+    const inserted = await input.tx<{ id: string }[]>`insert into visual_experience_blueprints(
       id,workspace_id,experience_version_id,contract,blueprint,blueprint_hash,validation_context,scene_mapping,validation_status,
       blueprint_contract,renderer_version,authored_fixture,fixture_label,created_by
     ) values(${id}::uuid,${input.workspaceId}::uuid,${input.experienceVersionId}::uuid,'ADEENA-VISUAL-EXPERIENCE-ASSOCIATION-v1',
-      ${JSON.stringify(validated.blueprint)}::jsonb,${blueprintHash},${JSON.stringify(context)}::jsonb,${JSON.stringify(mapping)}::jsonb,'valid',
-      'ADEENA-VISUAL-LEARNING-v1',${VISUAL_RENDERER_VERSION},${input.authoredFixture === true},${input.fixtureLabel ?? null},${workspace.userId}::uuid)
+      ${canonical(validated.blueprint)}::text::jsonb,${blueprintHash},${canonical(context)}::text::jsonb,${canonical(mapping)}::text::jsonb,'valid',
+      'ADEENA-VISUAL-LEARNING-v1',${VISUAL_RENDERER_VERSION},${input.authoredFixture === true},${input.fixtureLabel ?? null},${input.userId}::uuid)
       on conflict(workspace_id,experience_version_id) do nothing returning id::text`;
     if (!inserted[0]) {
-      const existing = await workspace.tx<{ id: string; blueprint_hash: string }[]>`select id::text,blueprint_hash from visual_experience_blueprints where workspace_id=${input.workspaceId}::uuid and experience_version_id=${input.experienceVersionId}::uuid`;
+      const existing = await input.tx<{ id: string; blueprint_hash: string }[]>`select id::text,blueprint_hash from visual_experience_blueprints where workspace_id=${input.workspaceId}::uuid and experience_version_id=${input.experienceVersionId}::uuid`;
       if (existing[0]?.blueprint_hash !== blueprintHash) throw new SourceError("invalid-experience");
       return { associationId: existing[0].id, replayed: true };
     }
     return { associationId: inserted[0].id, replayed: false };
-  });
 }
 
 export async function bindVisualNarration(input: { sql: Sql; identity: VerifiedIdentity; workspaceId: string; experienceVersionId: string; associationId: string; segmentId: string; audioAssetId: string; playback: unknown }) {
