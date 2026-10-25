@@ -16,7 +16,7 @@ import { runExtractionOnce } from "./worker";
 import { recommendFirstTopic } from "./topic-repository";
 import { createPlayableExperience } from "./experience-repository";
 
-const env = { ADEENA_EXPERIENCE_PROVIDER: "configured-provider", ADEENA_AI_EXECUTION_MODE: "free-development", ADEENA_RUNTIME: "nonproduction-test", ADEENA_GROQ_PLAN: "free", ADEENA_AI_MODEL: "openai/gpt-oss-120b", ADEENA_AI_API_URL: "https://api.groq.com/openai/v1/responses", ADEENA_GROQ_API_KEY: "test-key" };
+const env = { ADEENA_EXPERIENCE_PROVIDER: "configured-provider", ADEENA_AI_EXECUTION_MODE: "free-development", ADEENA_RUNTIME: "nonproduction-test", ADEENA_GROQ_PLAN: "free", ADEENA_AI_MODEL: "openai/gpt-oss-120b", ADEENA_AI_API_URL: "https://api.groq.com/openai/v1/responses", ADEENA_GROQ_API_KEY: "test-key", ADEENA_GROQ_ACCOUNT_LIMITS_VERIFIED_AT: new Date().toISOString(), ADEENA_GROQ_VERIFIED_PLAN: "free", ADEENA_GROQ_VERIFIED_MODEL_AVAILABLE: "yes", ADEENA_GROQ_VERIFIED_BILLING_ESCALATION: "none", ADEENA_GROQ_VERIFIED_RATE_SHAPE: "combined", ADEENA_GROQ_VERIFIED_RPM: "100", ADEENA_GROQ_VERIFIED_TPM: "100000", ADEENA_GROQ_VERIFIED_REMAINING_REQUESTS: "100", ADEENA_GROQ_VERIFIED_REMAINING_TOKENS: "100000" };
 describe("durable model generation", () => {
   const database = `adeena_model_test_${randomUUID().replaceAll("-", "")}`;
   let maintenance: DatabaseClient, admin: DatabaseClient, sql: DatabaseClient;

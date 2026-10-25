@@ -133,6 +133,7 @@ export function visualDirectorPayload(input: VisualDirectorInput, proposal?: Vis
     ageBand: input.source.ageBand,
     locale: input.locale,
     excerpts: input.source.spans,
+    allowedEvidence: exactEvidence(input.source),
     capabilities: {
       archetypes: input.implementedArchetypes.map((id) => ({ id, purpose: ARCHETYPE_REGISTRY[id].purpose })),
       practiceMechanics: input.practiceMechanics,

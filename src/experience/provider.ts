@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import type { SourceErrorCode } from "@/source/errors";
 import type { DialogueTarget } from "./edit";
 import { groqTransportSchema, mapGroqGraphTransport, mapGroqTransport, readGroqAssistantPayload } from "./groq-edit";
+import { groqStrictTransportSchema, normalizeGroqStrictOutput } from "./strict-transport";
 
 export const FIXTURE_PROVIDER = "deterministic-fixture" as const;
 export const CONFIGURED_PROVIDER = "configured-provider" as const;
@@ -31,6 +32,7 @@ const OPENAI_RESPONSES_URL = "https://api.openai.com/v1/responses";
 export const GROQ_GPT_OSS_120B_MODEL = "openai/gpt-oss-120b";
 export const GROQ_RESPONSES_URL = "https://api.groq.com/openai/v1/responses";
 export const GROQ_COMMERCIAL_PRICE = "groq-gpt-oss-120b-ondemand-2026-10";
+const GROQ_CONTEXT_TOKENS = 131_072;
 
 /**
  * Versioned prices in USD micros per 1,000,000 tokens.
@@ -72,6 +74,44 @@ export type RateSchedule = {
   readonly outputMicrosPerMillion: number;
 };
 export type ProviderEnv = Record<string, string | undefined>;
+
+/** Deliberately conservative byte heuristic, not a model-tokenizer count. */
+export function serializedRequestBudget(body: object, maxOutputTokens: number) {
+  const serializedBytes = Buffer.byteLength(JSON.stringify(body), "utf8");
+  const schema = (body as { text?: { format?: { schema?: unknown } } }).text?.format?.schema;
+  const schemaBytes = schema ? Buffer.byteLength(JSON.stringify(schema), "utf8") : 0;
+  const estimatedInputTokens = Math.ceil(serializedBytes / 3);
+  const admissionInputTokens = Math.ceil(serializedBytes / 2) + 256;
+  return { serializedBytes, schemaBytes, estimatedInputTokens, admissionInputTokens, maxOutputTokens, totalAdmissionTokens: admissionInputTokens + maxOutputTokens };
+}
+
+function verifiedGroqQuota(env: ProviderEnv, inputTokens: number, outputTokens: number) {
+  const verifiedAt = Date.parse(env.ADEENA_GROQ_ACCOUNT_LIMITS_VERIFIED_AT ?? "");
+  const number = (key: string) => {
+    const value = env[key];
+    return value && /^[0-9]+$/.test(value) ? Number(value) : NaN;
+  };
+  const rpm = number("ADEENA_GROQ_VERIFIED_RPM");
+  const tpm = number("ADEENA_GROQ_VERIFIED_TPM");
+  const remainingRequests = number("ADEENA_GROQ_VERIFIED_REMAINING_REQUESTS");
+  const remainingTokens = number("ADEENA_GROQ_VERIFIED_REMAINING_TOKENS");
+  const totalTokens = inputTokens + outputTokens;
+  const shape = env.ADEENA_GROQ_VERIFIED_RATE_SHAPE;
+  const split = shape === "split";
+  const splitFits = !split || [
+    number("ADEENA_GROQ_VERIFIED_ITPM") >= inputTokens,
+    number("ADEENA_GROQ_VERIFIED_OTPM") >= outputTokens,
+    number("ADEENA_GROQ_VERIFIED_REMAINING_INPUT_TOKENS") >= inputTokens,
+    number("ADEENA_GROQ_VERIFIED_REMAINING_OUTPUT_TOKENS") >= outputTokens,
+  ].every(Boolean);
+  return env.ADEENA_GROQ_VERIFIED_PLAN === "free"
+    && env.ADEENA_GROQ_VERIFIED_MODEL_AVAILABLE === "yes"
+    && env.ADEENA_GROQ_VERIFIED_BILLING_ESCALATION === "none"
+    && (shape === "combined" || split)
+    && splitFits && Number.isFinite(verifiedAt) && Math.abs(Date.now() - verifiedAt) <= 300_000
+    && [rpm, tpm, remainingRequests, remainingTokens].every(Number.isSafeInteger)
+    && rpm >= 1 && remainingRequests >= 1 && tpm >= totalTokens && remainingTokens >= totalTokens;
+}
 
 export type EditSpend = {
   model: string;
@@ -312,9 +352,15 @@ export async function requestPaidEdit(input: {
   const spend = auth.spend;
   const tokenLimits = input.structuredGeneration ? GENERATION_LIMITS[input.structuredGeneration.kind] : { input: MAX_INPUT_TOKENS, output: MAX_OUTPUT_TOKENS };
   const estimated = tokenCost(spend, tokenLimits.input, 0, tokenLimits.output);
-  // A conservative byte bound includes the schema and framing, rather than
-  // assuming four characters per token for a financially authorized request.
-  if (input.structuredGeneration && Buffer.byteLength(JSON.stringify({ instructions: input.systemText, input: input.userText, schema: input.structuredGeneration.schema }), "utf8") + 512 > tokenLimits.input) return unused("budget-unavailable", spend.model, spend.priceVersion, estimated ?? 0);
+  const transport = input.structuredGeneration ? groqStrictTransportSchema(input.structuredGeneration.schema) : null;
+  if (transport && !transport.ok) return { ...unused("invalid-experience", spend.model, spend.priceVersion, estimated ?? 0), diagnostic: `schema.compatibility: ${transport.issues[0].code} at ${transport.issues[0].path}` };
+  const requestBody = {
+    model: spend.model, store: false, max_output_tokens: tokenLimits.output, reasoning: { effort: "none" },
+    input: [{ role: "system", content: input.systemText }, { role: "user", content: input.userText }],
+    text: { format: { type: "json_schema", name: input.structuredGeneration ? `experience_${input.structuredGeneration.kind}` : "experience_edit", strict: true, schema: transport?.ok ? transport.schema : EDIT_OUTPUT_SCHEMA } },
+  };
+  const budget = serializedRequestBudget(requestBody, tokenLimits.output);
+  if (input.structuredGeneration && (budget.admissionInputTokens > tokenLimits.input || (spend.apiUrl === GROQ_RESPONSES_URL && budget.totalAdmissionTokens > GROQ_CONTEXT_TOKENS))) return { ...unused("budget-unavailable", spend.model, spend.priceVersion, estimated ?? 0), diagnostic: "request.input-budget" };
   if (estimated === null || estimated > spend.maxEditMicros || estimated > spend.spendCapMicros || input.userText.length > (input.structuredGeneration ? 18000 : 12000) || input.systemText.length > (input.structuredGeneration ? 4000 : 2000)) {
     return unused("budget-unavailable", spend.model, spend.priceVersion, estimated ?? 0);
   }
@@ -335,17 +381,7 @@ export async function requestPaidEdit(input: {
         redirect: "error",
         signal: AbortSignal.timeout(timeoutMs),
         headers: { "content-type": "application/json", authorization: `Bearer ${key}` },
-        body: JSON.stringify({
-          model: spend.model,
-          store: false,
-          max_output_tokens: tokenLimits.output,
-          reasoning: { effort: "none" },
-          input: [
-            { role: "system", content: input.systemText },
-            { role: "user", content: input.userText },
-          ],
-          text: { format: { type: "json_schema", name: input.structuredGeneration ? `experience_${input.structuredGeneration.kind}` : "experience_edit", strict: true, schema: input.structuredGeneration?.schema ?? EDIT_OUTPUT_SCHEMA } },
-        }),
+        body: JSON.stringify(requestBody),
       });
     } catch {
       return charged("provider-unavailable", spend, estimated, callCount, retryCount, blankUsage(), "estimate", 0, false);
@@ -380,7 +416,13 @@ export async function requestPaidEdit(input: {
   }
   if (!body.parsed) return charged("invalid-experience", spend, estimated, callCount, retryCount, blankUsage(), "estimate", 0, false, responseId);
   if (input.structuredGeneration && (usage.inputTokens > tokenLimits.input || usage.outputTokens > tokenLimits.output)) return finish(spend, estimated, callCount, retryCount, usage, responseId, "budget-unavailable", null);
-  return finish(spend, estimated, callCount, retryCount, usage, responseId, null, readModelContent(body.parsed));
+  const content = readModelContent(body.parsed);
+  if (input.structuredGeneration) {
+    const normalized = normalizeGroqStrictOutput(content, input.structuredGeneration.schema);
+    if (!normalized.ok) return { ...finish(spend, estimated, callCount, retryCount, usage, responseId, "invalid-experience", null), diagnostic: `schema.normalization: ${normalized.diagnostic}` };
+    return finish(spend, estimated, callCount, retryCount, usage, responseId, null, normalized.value);
+  }
+  return finish(spend, estimated, callCount, retryCount, usage, responseId, null, content);
 }
 
 async function requestFreeEdit(input: {
@@ -400,10 +442,19 @@ async function requestFreeEdit(input: {
   if (!auth.ok) return { ...unused(auth.code, GROQ_GPT_OSS_120B_MODEL, GROQ_COMMERCIAL_PRICE, 0), executionMode: "free-development" };
   const tokenLimits = input.structuredGeneration ? GENERATION_LIMITS[input.structuredGeneration.kind] : { input: MAX_INPUT_TOKENS, output: MAX_OUTPUT_TOKENS };
   const ceiling = billedMicros(GROQ_COMMERCIAL_SCHEDULE, tokenLimits.input, 0, tokenLimits.output) ?? 0;
-  const proxyTokens = Math.ceil((input.systemText.length + input.userText.length) / 4);
-  if (input.userText.length > (input.structuredGeneration ? 18000 : 12000) || input.systemText.length > (input.structuredGeneration ? 4000 : 2000) || proxyTokens > tokenLimits.input) {
+  const transport = input.structuredGeneration ? groqStrictTransportSchema(input.structuredGeneration.schema) : null;
+  if (transport && !transport.ok) return { ...unused("invalid-experience", auth.model, auth.priceVersion, 0), executionMode: "free-development", diagnostic: `schema.compatibility: ${transport.issues[0].code} at ${transport.issues[0].path}` };
+  const requestBody = {
+    model: auth.model, instructions: input.systemText, input: input.userText,
+    max_output_tokens: tokenLimits.output, reasoning: { effort: "low" }, tool_choice: "none",
+    text: { format: { type: "json_schema", name: input.structuredGeneration ? `experience_${input.structuredGeneration.kind}` : "experience_edit", strict: true, schema: transport?.ok ? transport.schema : input.outputSchema ?? groqTransportSchema() } },
+  };
+  const budget = serializedRequestBudget(requestBody, tokenLimits.output);
+  if (input.userText.length > (input.structuredGeneration ? 18000 : 12000) || input.systemText.length > (input.structuredGeneration ? 4000 : 2000)
+    || (input.structuredGeneration && (budget.admissionInputTokens > tokenLimits.input || budget.totalAdmissionTokens > GROQ_CONTEXT_TOKENS))) {
     return { ...unused("budget-unavailable", auth.model, auth.priceVersion, 0), executionMode: "free-development" };
   }
+  if (input.structuredGeneration && !verifiedGroqQuota(input.env, budget.admissionInputTokens, budget.maxOutputTokens)) return { ...unused("budget-unavailable", auth.model, auth.priceVersion, 0), executionMode: "free-development", diagnostic: "account.verified-quota-unavailable" };
   const key = input.env.ADEENA_GROQ_API_KEY?.trim() ?? "";
   const fetchImpl = input.fetchImpl ?? fetch;
   const timeoutMs = input.timeoutMs ?? 45_000;
@@ -422,15 +473,7 @@ async function requestFreeEdit(input: {
         redirect: "error",
         signal: AbortSignal.timeout(timeoutMs),
         headers: { "content-type": "application/json", authorization: `Bearer ${key}` },
-        body: JSON.stringify({
-          model: auth.model,
-          instructions: input.systemText,
-          input: input.userText,
-          max_output_tokens: tokenLimits.output,
-          reasoning: { effort: "low" },
-          tool_choice: "none",
-          text: { format: { type: "json_schema", name: input.structuredGeneration ? `experience_${input.structuredGeneration.kind}` : "experience_edit", strict: true, schema: input.structuredGeneration?.schema ?? input.outputSchema ?? groqTransportSchema() } },
-        }),
+        body: JSON.stringify(requestBody),
       });
     } catch {
       return asFree(charged("provider-unavailable", spend, ceiling, callCount, retryCount, blankUsage(), "none", 0, false), limits, started, ceiling);
@@ -478,7 +521,9 @@ async function requestFreeEdit(input: {
     return { ...asFree(finish(spend, ceiling, callCount, retryCount, usage, responseId, null, { status }), limits, started, ceiling), diagnostic: extracted.diagnostic };
   }
   if (input.structuredGeneration) {
-    const result = asFree(finish(spend, ceiling, callCount, retryCount, usage, responseId, null, extracted.payload), limits, started, ceiling);
+    const normalized = normalizeGroqStrictOutput(extracted.payload, input.structuredGeneration.schema);
+    const result = asFree(finish(spend, ceiling, callCount, retryCount, usage, responseId, normalized.ok ? null : "invalid-experience", normalized.ok ? normalized.value : null), limits, started, ceiling);
+    if (!normalized.ok) return { ...result, diagnostic: `schema.normalization: ${normalized.diagnostic}` };
     if (result.inputTokens > tokenLimits.input || result.outputTokens > tokenLimits.output) return { ...result, ok: false, code: "budget-unavailable", content: undefined };
     return result;
   }
