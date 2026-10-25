@@ -5,7 +5,7 @@ import type { Sql } from "postgres";
 import { databaseFailure } from "./client";
 
 const directory = path.dirname(fileURLToPath(import.meta.url));
-const migrations = ["0001_ingestion", "0002_creator_workspace", "0003_membership_force", "0004_topic_recommendation", "0005_experience_generation", "0006_experience_editing", "0007_edit_spend", "0008_free_development", "0009_creator_workflows", "0010_creator_workflow_integrity", "0011_public_releases", "0012_creator_share", "0013_source_game_generation", "0014_simplified_share", "0015_generation_excerpts", "0016_private_audio_assets", "0017_narration_generation", "0018_visual_experience_associations", "0019_visual_ai_generation", "0020_visual_generation_leases"] as const;
+const migrations = ["0001_ingestion", "0002_creator_workspace", "0003_membership_force", "0004_topic_recommendation", "0005_experience_generation", "0006_experience_editing", "0007_edit_spend", "0008_free_development", "0009_creator_workflows", "0010_creator_workflow_integrity", "0011_public_releases", "0012_creator_share", "0013_source_game_generation", "0014_simplified_share", "0015_generation_excerpts", "0016_private_audio_assets", "0017_narration_generation", "0018_visual_experience_associations", "0019_visual_ai_generation", "0020_visual_generation_leases", "0021_visual_worker_privileges"] as const;
 
 function script(name: string) {
   return readFileSync(path.join(directory, "migrations", name), "utf8");
@@ -37,6 +37,8 @@ export async function migrateUp(sql: Sql) {
 export async function migrateDown(sql: Sql) {
   try {
     await sql.begin(async (tx) => {
+      const workerPrivileges = await tx`SELECT 1 FROM adeena_schema_migrations WHERE id = '0021_visual_worker_privileges'`;
+      if (workerPrivileges.length > 0) await tx.unsafe(script("0021_visual_worker_privileges.down.sql"));
       await tx.unsafe(script("0020_visual_generation_leases.down.sql"));
       await tx.unsafe(script("0019_visual_ai_generation.down.sql"));
       await tx.unsafe(script("0018_visual_experience_associations.down.sql"));

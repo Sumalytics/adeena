@@ -64,7 +64,7 @@ async function executeClaim(input: WorkerOptions, claim: VisualWorkerClaim): Pro
           if (!await claimFreeRequest(scope, auth.sessionLimit, auth.dayLimit) || !await claimFreeRequest(scope, auth.sessionLimit, auth.dayLimit)) throw new SourceError("budget-unavailable");
         } else if (!await reserveAnotherEstimate(scope, ceiling, auth.spend.spendCapMicros)) throw new SourceError("budget-unavailable");
         await scope.tx`insert into visual_generation_costs(id,workspace_id,job_id,model,pricing_version,execution_mode,reserved_cost_micros,actual_cost_micros,commercial_estimate_micros,usage_kind,model_calls,created_by)
-          values(${randomUUID()}::uuid,${claim.workspaceId}::uuid,${claim.jobId}::uuid,${free ? auth.model : auth.spend.model},${free ? auth.priceVersion : auth.spend.priceVersion},${free ? "free-development" : "paid-development"},${free ? 0 : ceiling},${free ? 0 : ceiling},${free ? 0 : null},'estimate','[]'::jsonb,${scope.userId}::uuid)
+          values(${randomUUID()}::uuid,${claim.workspaceId}::uuid,${claim.jobId}::uuid,${free ? auth.model : auth.spend.model},${free ? auth.priceVersion : auth.spend.priceVersion},${free ? "free-development" : "paid-development"},${free ? 0 : ceiling},${free ? 0 : ceiling},${free ? 0 : null},'estimate','[]'::jsonb,${scope.creatorAttributionId}::uuid)
           on conflict(job_id) do nothing`;
         await scope.tx`update visual_generation_jobs set status='planning',updated_at=now() where id=${claim.jobId}::uuid`;
       }
@@ -72,7 +72,7 @@ async function executeClaim(input: WorkerOptions, claim: VisualWorkerClaim): Pro
       return { status: job.status === "queued" ? "planning" : job.status as "planning" | "reviewing", directorInput, proposal };
     });
   } catch (error) {
-    return failKnown(input.sql, claim, error instanceof SourceError ? error.code : "provider-unavailable", started);
+    return failKnown(input.sql, claim, safeFailureCode(error), started);
   }
 
   if (prepared.status === "ready") return { jobId: claim.jobId, status: "ready", associationId: prepared.associationId, replayed: true };
@@ -113,7 +113,7 @@ async function executeClaim(input: WorkerOptions, claim: VisualWorkerClaim): Pro
     return withVisualWorkerClaim(input.sql, claim, async (scope) => {
       await appendStage(scope.tx, claim, "visualReview", review);
       const associationId = (await associateVisualExperienceInScope({
-        tx: scope.tx, userId: scope.userId, workspaceId: claim.workspaceId, experienceVersionId: claim.experienceVersionId,
+        tx: scope.tx, userId: scope.creatorAttributionId, workspaceId: claim.workspaceId, experienceVersionId: claim.experienceVersionId,
         blueprint: checked.proposal.blueprint, context: checked.context, mapping: checked.proposal.mapping, authoredFixture: false, fixtureLabel: null,
       })).associationId;
       return finishInScope(scope, claim, free, ceiling, "ready", null, [], started, proposal, review.content, associationId);
@@ -144,7 +144,7 @@ async function finish(sql: Sql, claim: VisualWorkerClaim, free: boolean, ceiling
   });
 }
 
-async function finishInScope(scope: { tx: Sql; userId: string }, claim: VisualWorkerClaim, free: boolean, ceiling: number, status: "ready" | "unsupported" | "failed", failureCode: string | null, diagnostics: { code: string; message: string }[], started: number, proposal?: VisualDirectorProposal | null, review?: unknown, associationId?: string): Promise<VisualGenerationResult> {
+async function finishInScope(scope: { tx: Sql; creatorAttributionId: string }, claim: VisualWorkerClaim, free: boolean, ceiling: number, status: "ready" | "unsupported" | "failed", failureCode: string | null, diagnostics: { code: string; message: string }[], started: number, proposal?: VisualDirectorProposal | null, review?: unknown, associationId?: string): Promise<VisualGenerationResult> {
     const rows = await scope.tx<{ call_count: number; input_tokens: number; output_tokens: number; model_calls: unknown }[]>`select call_count,input_tokens,output_tokens,model_calls from visual_generation_costs where job_id=${claim.jobId}::uuid for update`;
     const cost = rows[0];
     const calls = Array.isArray(cost?.model_calls) ? cost.model_calls as Record<string, unknown>[] : [];

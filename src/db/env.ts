@@ -10,6 +10,21 @@ export function applicationDatabaseUrl(): string {
   return postgresUrl("ADEENA_APP_DATABASE_URL");
 }
 
+/** Dedicated visual-worker connection. It must authenticate as the worker role. */
+export function visualWorkerDatabaseUrl(): string {
+  const value = postgresUrl("ADEENA_VISUAL_WORKER_DATABASE_URL");
+  let username = "";
+  try {
+    username = decodeURIComponent(new URL(value).username);
+  } catch {
+    throw new Error("ADEENA_VISUAL_WORKER_DATABASE_URL must be a PostgreSQL connection URL.");
+  }
+  if (username !== "adeena_visual_worker") {
+    throw new Error("ADEENA_VISUAL_WORKER_DATABASE_URL must authenticate as adeena_visual_worker.");
+  }
+  return value;
+}
+
 function postgresUrl(name: string) {
   const configured = process.env[name]?.trim();
   const value = configured || readLocalSetting(name);

@@ -54,7 +54,9 @@ async function waitForCall(log: string) {
 
 describe("durable visual AI generation", () => {
   const database = `adeena_visual_test_${randomUUID().replaceAll("-", "")}`;
-  let maintenance: DatabaseClient, admin: DatabaseClient, sql: DatabaseClient;
+  const workerPassword = randomUUID().replaceAll("-", "");
+  let maintenance: DatabaseClient, admin: DatabaseClient, sql: DatabaseClient, workerSql: DatabaseClient;
+  let workerUrl: string;
   let root: string;
   beforeAll(async () => {
     await build({ configFile: path.resolve("vite.visual-worker.config.mts"), logLevel: "silent" });
@@ -63,9 +65,22 @@ describe("durable visual AI generation", () => {
     admin = openDatabase(urlForDatabase(databaseUrl(), database));
     sql = openDatabase(urlForDatabase(applicationDatabaseUrl(), database));
     await migrateUp(admin);
+    await admin.unsafe(`ALTER ROLE adeena_visual_worker LOGIN PASSWORD '${workerPassword}'`);
+    const parsedWorkerUrl = new URL(urlForDatabase(databaseUrl(), database));
+    parsedWorkerUrl.username = "adeena_visual_worker";
+    parsedWorkerUrl.password = workerPassword;
+    workerUrl = parsedWorkerUrl.toString();
+    workerSql = openDatabase(workerUrl);
+    const [roles] = await admin<{ app_role: string; worker_role: string; superuser: boolean; bypass_rls: boolean; create_db: boolean; create_role: boolean; inherits: boolean }[]>`
+      select 'adeena_app' as app_role,r.rolname as worker_role,r.rolsuper as superuser,r.rolbypassrls as bypass_rls,r.rolcreatedb as create_db,r.rolcreaterole as create_role,r.rolinherit as inherits
+      from pg_roles r where r.rolname='adeena_visual_worker'`;
+    expect(roles).toEqual({ app_role: "adeena_app", worker_role: "adeena_visual_worker", superuser: false, bypass_rls: false, create_db: false, create_role: false, inherits: false });
+    expect((await workerSql`select current_user as role`)[0]).toEqual({ role: "adeena_visual_worker" });
     root = await mkdtemp(path.join(tmpdir(), "adeena-visual-model-"));
   });
   afterAll(async () => {
+    await workerSql?.end({ timeout: 1 });
+    if (admin) await admin`ALTER ROLE adeena_visual_worker NOLOGIN`;
     await sql?.end({ timeout: 1 }); await admin?.end({ timeout: 1 });
     await maintenance.unsafe(`DROP DATABASE ${database}`); await maintenance.end();
     if (root) await rm(root, { recursive: true, force: true });
@@ -145,22 +160,28 @@ describe("durable visual AI generation", () => {
     const concurrent = await creatorWorkflowGenerateResponse({ session, sql, workflowId: workflow.id, body: { expectedVersion: workflow.version, authorizeGeneration: true }, provider: "configured-provider", env, fetchImpl });
     expect(concurrent).toMatchObject({ status: 202, body: { generation: { visualStatus: "queued" } } });
     expect("background" in concurrent && concurrent.background).toBeFalsy();
+    await expect(sql`select * from adeena.claim_visual_generation_job('app-process'::text,60::integer,null::uuid)`).rejects.toThrow(/permission denied/i);
+    await expect(sql`select adeena.activate_visual_generation_claim(${randomUUID()}::uuid,'app-process'::text,${randomUUID()}::uuid)`).rejects.toThrow(/permission denied/i);
     const callLog = path.join(root, "provider-calls.log");
     const workerFile = path.resolve(".local/visual-worker/visual-generation-worker.mjs");
     const workerEnv = {
       ...process.env,
       ...env,
       ADEENA_APP_DATABASE_URL: urlForDatabase(applicationDatabaseUrl(), database),
+      ADEENA_VISUAL_WORKER_DATABASE_URL: workerUrl,
       ADEENA_VISUAL_WORKER_FAKE_CALL_LOG: callLog,
       NODE_OPTIONS: `--import=${pathToFileURL(path.resolve("scripts/testing/visual-worker-provider.mjs")).href}`,
     };
+    const rejectedConfig = await child(process.execPath, [workerFile, "--once"], { ...workerEnv, ADEENA_VISUAL_WORKER_DATABASE_URL: workerEnv.ADEENA_APP_DATABASE_URL }).done;
+    expect(rejectedConfig.code).not.toBe(0);
+    expect(rejectedConfig.stderr).toMatch(/must authenticate as adeena_visual_worker/i);
     await writeFile(callLog, "");
     const workers = [child(process.execPath, [workerFile, "--once"], workerEnv), child(process.execPath, [workerFile, "--once"], workerEnv)];
     const workerResults = await Promise.all(workers.map((worker) => worker.done));
     expect(workerResults.map((result) => result.code)).toEqual([0, 0]);
     const workerEvents = workerResults.flatMap((result) => result.stdout.split("\n").flatMap((line) => line.startsWith("{") ? [JSON.parse(line) as Record<string, unknown>] : []));
     expect(workerEvents.find((event) => event.event === "visual-worker-started")).toMatchObject({ startupMs: expect.any(Number) });
-    expect(workerEvents.find((event) => event.event === "visual-job-finished")).toMatchObject({ attemptCount: 1, queueDelayMs: expect.any(Number), completionMs: expect.any(Number), status: "ready" });
+    expect(workerEvents.find((event) => event.event === "visual-job-finished"), JSON.stringify(workerEvents)).toMatchObject({ attemptCount: 1, queueDelayMs: expect.any(Number), completionMs: expect.any(Number), status: "ready" });
     const initialCalls = (await readFile(callLog, "utf8")).trim().split("\n");
     expect(initialCalls).toEqual(["experience_visualPlan", "experience_visualReview"]);
     const completed = await creatorWorkflowGenerationReadResponse({ session, sql, workflowId: workflow.id });
@@ -192,21 +213,50 @@ describe("durable visual AI generation", () => {
     };
 
     await createQueuedVisual();
-    const probe = child(process.execPath, [path.resolve("scripts/testing/claim-visual-job.mjs")], { ...process.env, ADEENA_APP_DATABASE_URL: workerEnv.ADEENA_APP_DATABASE_URL });
+    const probe = child(process.execPath, [path.resolve("scripts/testing/claim-visual-job.mjs")], { ...process.env, ADEENA_VISUAL_WORKER_DATABASE_URL: workerUrl });
     const probeResult = await probe.done;
     expect(probeResult.code).toBe(0);
     const claimed = JSON.parse(probeResult.stdout.trim()) as { job_id: string; workspace_id: string; lease_token: string };
     const otherIdentity = issueIdentityForIsolatedTests(randomUUID());
     const otherWorkspaceId = randomUUID();
     await createWorkspace(sql, otherIdentity, { id: otherWorkspaceId, name: "Other visual tenant", workspaceType: "personal" });
-    await sql.begin(async (transaction) => {
+    const otherUploaded = await enqueueDurableSource({ sql, identity: otherIdentity, workspaceId: otherWorkspaceId, filename: "private-other.md", bytes: Buffer.from("# Other tenant\n\nThis private source belongs to another workspace and must remain isolated."), store, idempotencyKey: randomUUID() });
+    await workerSql.begin(async (transaction) => {
       const tx = transaction as unknown as DatabaseClient;
       await tx`select adeena.activate_visual_generation_claim(${claimed.job_id}::uuid,'restart-probe'::text,${claimed.lease_token}::uuid)`;
-      const visible = await tx<{ id: string }[]>`select id::text from workspaces order by id`;
-      expect(visible.map((row) => row.id)).toEqual([claimed.workspace_id]);
+      const visible = await tx<{ id: string }[]>`select id::text from source_document_versions order by id`;
+      expect(visible.map((row) => row.id)).toContain(uploaded.version.id);
+      expect(visible.map((row) => row.id)).not.toContain(otherUploaded.version.id);
     });
-    await expect(sql`select adeena.activate_visual_generation_claim(${randomUUID()}::uuid,'restart-probe'::text,${claimed.lease_token}::uuid)`).rejects.toThrow(/invalid or expired visual worker claim/);
+    await expect(workerSql.begin(async (transaction) => {
+      const tx = transaction as unknown as DatabaseClient;
+      await tx`select adeena.activate_visual_generation_claim(${claimed.job_id}::uuid,'restart-probe'::text,${claimed.lease_token}::uuid)`;
+      await tx`select id from workspaces`;
+    })).rejects.toThrow(/permission denied/i);
+    await sql.begin(async (transaction) => {
+      const tx = transaction as unknown as DatabaseClient;
+      await tx`select set_config('adeena.visual_worker_job_id',${claimed.job_id},true),set_config('adeena.visual_worker_owner','restart-probe',true),set_config('adeena.visual_worker_token',${claimed.lease_token},true)`;
+      const leaked = await tx`select id from source_document_versions where workspace_id=${otherWorkspaceId}::uuid`;
+      expect(leaked).toHaveLength(0);
+    });
+    await expect(workerSql`select adeena.activate_visual_generation_claim(${randomUUID()}::uuid,'restart-probe'::text,${claimed.lease_token}::uuid)`).rejects.toThrow(/invalid or expired visual worker claim/);
+    await expect(workerSql.begin(async (transaction) => {
+      const tx = transaction as unknown as DatabaseClient;
+      await tx`select adeena.activate_visual_generation_claim(${claimed.job_id}::uuid,'restart-probe'::text,${claimed.lease_token}::uuid)`;
+      await tx`update experience_releases set revoked_at=now(),revoked_by=${identity.userId}::uuid`;
+    })).rejects.toThrow(/permission denied/i);
+    await expect(workerSql.begin(async (transaction) => {
+      const tx = transaction as unknown as DatabaseClient;
+      await tx`select adeena.activate_visual_generation_claim(${claimed.job_id}::uuid,'restart-probe'::text,${claimed.lease_token}::uuid)`;
+      await tx`insert into experience_releases(id) values(${randomUUID()}::uuid)`;
+    })).rejects.toThrow(/permission denied/i);
+    await expect(workerSql.begin(async (transaction) => {
+      const tx = transaction as unknown as DatabaseClient;
+      await tx`select adeena.activate_visual_generation_claim(${claimed.job_id}::uuid,'restart-probe'::text,${claimed.lease_token}::uuid)`;
+      await tx`update source_document_versions set rights_status='cleared' where id=${uploaded.version.id}::uuid`;
+    })).rejects.toThrow(/permission denied/i);
     await admin`update visual_generation_jobs set lease_expires_at=now()-interval '1 second' where id=${claimed.job_id}::uuid`;
+    await expect(workerSql`select adeena.activate_visual_generation_claim(${claimed.job_id}::uuid,'restart-probe'::text,${claimed.lease_token}::uuid)`).rejects.toThrow(/invalid or expired visual worker claim/);
     await writeFile(callLog, "");
     const recovered = await child(process.execPath, [workerFile, "--once"], workerEnv).done;
     expect(recovered.code).toBe(0);
@@ -232,11 +282,11 @@ describe("durable visual AI generation", () => {
 
     const exhausted = await createQueuedVisual();
     for (let attempt = 0; attempt < 3; attempt += 1) {
-      const claimedWithoutProvider = await child(process.execPath, [path.resolve("scripts/testing/claim-visual-job.mjs")], { ...process.env, ADEENA_APP_DATABASE_URL: workerEnv.ADEENA_APP_DATABASE_URL }).done;
+      const claimedWithoutProvider = await child(process.execPath, [path.resolve("scripts/testing/claim-visual-job.mjs")], { ...process.env, ADEENA_VISUAL_WORKER_DATABASE_URL: workerUrl }).done;
       expect(claimedWithoutProvider.code).toBe(0);
       await admin`update visual_generation_jobs set lease_expires_at=now()-interval '1 second' where id=${exhausted.jobId}::uuid`;
     }
-    await child(process.execPath, [path.resolve("scripts/testing/claim-visual-job.mjs")], { ...process.env, ADEENA_APP_DATABASE_URL: workerEnv.ADEENA_APP_DATABASE_URL }).done;
+    await child(process.execPath, [path.resolve("scripts/testing/claim-visual-job.mjs")], { ...process.env, ADEENA_VISUAL_WORKER_DATABASE_URL: workerUrl }).done;
     const [exhaustedJob] = await admin`select status,failure_code,attempt_count from visual_generation_jobs where id=${exhausted.jobId}::uuid`;
     expect(exhaustedJob).toMatchObject({ status: "failed", failure_code: "worker-attempts-exhausted", attempt_count: 3 });
   }, 60_000);

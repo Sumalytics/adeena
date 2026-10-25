@@ -43,12 +43,12 @@ export async function claimVisualGenerationJob(input: { sql: Sql; leaseOwner: st
   };
 }
 
-export async function withVisualWorkerClaim<T>(sql: Sql, claim: VisualWorkerClaim, run: (scope: { tx: Sql; workspaceId: string; userId: string }) => Promise<T>) {
+export async function withVisualWorkerClaim<T>(sql: Sql, claim: VisualWorkerClaim, run: (scope: { tx: Sql; workspaceId: string; creatorAttributionId: string }) => Promise<T>) {
   if (!claim || claim[claimBrand] !== true) throw new SourceError("unauthenticated");
   return sql.begin(async (transaction) => {
     const tx = transaction as unknown as Sql;
     const activated = await tx<{ workspace_id: string }[]>`select adeena.activate_visual_generation_claim(${claim.jobId}::uuid,${claim.leaseOwner},${claim.leaseToken}::uuid)::text as workspace_id`;
     if (activated[0]?.workspace_id !== claim.workspaceId) throw new SourceError("unauthenticated");
-    return run({ tx, workspaceId: claim.workspaceId, userId: claim.createdBy });
+    return run({ tx, workspaceId: claim.workspaceId, creatorAttributionId: claim.createdBy });
   });
 }
