@@ -54,7 +54,11 @@ describe("durable model generation", () => {
       requests++;
       const body = JSON.parse(String(init?.body));
       const context = JSON.parse(body.input);
-      const result = body.text.format.name === "experience_plan" ? { ...plan, facts: plan.facts.map(fact => ({ ...fact, spanId: context.excerpts[0].id })) } : { grounded: !rejectReview, coherent: true, consequential: true, audienceSuitable: true, issues: [] };
+      const { facts, ...planFields } = plan;
+      const result = body.text.format.name === "experience_plan" ? {
+        ...planFields, fact1: { ...facts[0], spanId: context.excerpts[0].id },
+        fact2: { ...facts[1], spanId: context.excerpts[0].id }, fact3: null, fact4: null,
+      } : { grounded: !rejectReview, coherent: true, consequential: true, audienceSuitable: true, issues: [] };
       return Response.json({ id: `resp_${requests}`, status: "completed", output: [{ type: "message", content: [{ type: "output_text", text: JSON.stringify(result) }] }], usage: { input_tokens: 1000, output_tokens: 800, output_tokens_details: { reasoning_tokens: 10 } } });
     };
     const input = { ...actor, documentVersionId, topicCandidateId, audienceLabel: "Primary learners", ageBand: "8-10" as const, idempotencyKey: randomUUID(), authorizeGeneration: true as const, provider: "configured-provider" as const, env, fetchImpl };

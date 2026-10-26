@@ -360,8 +360,10 @@ export async function requestPaidEdit(input: {
   const estimated = tokenCost(spend, tokenLimits.input, 0, tokenLimits.output);
   const transport = input.structuredGeneration ? groqStrictTransportSchema(input.structuredGeneration.schema) : null;
   if (transport && !transport.ok) return { ...unused("invalid-experience", spend.model, spend.priceVersion, estimated ?? 0), diagnostic: `schema.compatibility: ${transport.issues[0].code} at ${transport.issues[0].path}` };
+  const groqResponses = spend.apiUrl === GROQ_RESPONSES_URL;
   const requestBody = {
-    model: spend.model, store: false, max_output_tokens: tokenLimits.output, reasoning: { effort: "none" },
+    model: spend.model, ...(!groqResponses && { store: false }), max_output_tokens: tokenLimits.output,
+    reasoning: { effort: groqResponses ? "low" : "none" },
     input: [{ role: "system", content: input.systemText }, { role: "user", content: input.userText }],
     text: { format: { type: "json_schema", name: input.structuredGeneration ? `experience_${input.structuredGeneration.kind}` : "experience_edit", strict: true, schema: transport?.ok ? transport.schema : EDIT_OUTPUT_SCHEMA } },
   };

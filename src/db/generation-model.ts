@@ -4,7 +4,7 @@ import { withWorkspace } from "./authz";
 import type { VerifiedIdentity } from "./identity";
 import { claimFreeRequest, reconcileReservation, reserveAnotherEstimate, releaseUnusedFreeRequests } from "./model-budget";
 import { billedMicros, configuredEditAuthorization, GENERATION_LIMITS, GROQ_COMMERCIAL_SCHEDULE, type PaidEditResult, type ProviderEnv, type RateSchedule } from "@/experience/provider";
-import { parseSourcePlan, rejected, requestPlanStage, reviewPasses, selectedPlanSource } from "@/experience/model-plan";
+import { parseSourcePlan, rejected, requestPlanStage, reviewPasses, reviewRejection, selectedPlanSource } from "@/experience/model-plan";
 import type { Compilation, GenerationSource } from "@/experience/compile";
 import { SourceError } from "@/source/errors";
 
@@ -57,7 +57,7 @@ export async function generateModelPlan(input: Input): Promise<Compilation> {
       const reviewed = await requestPlanStage({ kind: "review", jobId: input.jobId, source, plan: outcome.plan, env, fetchImpl: input.fetchImpl, schedules: input.schedules });
       results.push({ stage: "review", result: reviewed });
       if (!reviewed.ok) outcome = providerFailure(reviewed);
-      else if (!reviewPasses(reviewed.content)) outcome = rejected("plan.review-rejected", "The independent source and outcome review rejected this plan.");
+      else if (!reviewPasses(reviewed.content, source, outcome.plan)) outcome = reviewRejection(reviewed.content, source, outcome.plan);
     }
   } catch {
     // Keep the reservation on an uncertain failure, never substitute a fixture.
@@ -75,7 +75,7 @@ export async function generateModelPlan(input: Input): Promise<Compilation> {
       usageKind: result.usageKind, billingCertainty: result.attempts?.at(-1)?.billingCertainty ?? (result.callCount ? "unknown-external-charge" : "confirmed-nonbillable"),
       confirmedCostMicros: result.usageKind === "actual" ? result.actualCostMicros : result.releaseReservation || result.callCount === 0 ? 0 : null,
       estimatedPossibleCostMicros: result.releaseReservation || result.callCount === 0 ? 0 : result.usageKind === "actual" ? result.actualCostMicros : result.estimatedCostMicros,
-      attempts: result.attempts ?? [], ...(result.ok ? stage === "review" ? { review: result.content } : { proposedPlan: result.content } : {}) }));
+      attempts: result.attempts ?? [], ...(result.content === undefined ? {} : stage === "review" ? { review: result.content } : { proposedPlan: result.content }) }));
     await workspace.tx`update experience_generation_costs set input_tokens=${total("inputTokens")},cached_input_tokens=${total("cachedInputTokens")},
       output_tokens=${total("outputTokens")},reasoning_tokens=${total("reasoningTokens")},call_count=${total("callCount")},retry_count=${total("retryCount")},
       actual_cost_micros=${uncertain ? null : free ? 0 : confirmed},estimated_cost_micros=${free ? 0 : possible},usage_kind=${uncertain ? "estimate" : results.some(({result}) => result.usageKind === "actual") ? "actual" : "none"},

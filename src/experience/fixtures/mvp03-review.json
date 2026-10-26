@@ -1,0 +1,164 @@
+{
+  "source": {
+    "documentVersionId": "84c6c3e4-604b-43fb-a5eb-af4ea3697136",
+    "experienceId": "11111111-1111-4111-8111-111111111111",
+    "versionId": "22222222-2222-4222-8222-222222222222",
+    "topicTitle": "Bean seed germination in a classroom tray",
+    "audienceLabel": "Primary learners",
+    "ageBand": "8-10",
+    "spans": [
+      {
+        "id": "54cc06df-9b12-4a68-b775-887948c0e5ec",
+        "excerpt": "A bean seed contains a young plant inside a protective seed coat. In a classroom tray, a seed placed on damp cotton can take up water. A seed left on dry cotton does not take up enough water to begin germinating. Taking up water starts the changes that allow the young plant to grow."
+      },
+      {
+        "id": "895bd280-5447-40ee-ba15-c158da0fe24a",
+        "excerpt": "After the seed takes up water, its seed coat splits. A small root appears first and grows downward. The root takes in water from the damp cotton. A shoot appears later and grows upward. These observations let a learner tell the early stages apart without guessing from the size of the seed alone."
+      },
+      {
+        "id": "b287bb6d-fada-48bd-b6fb-be301cde771d",
+        "excerpt": "The shoot needs light to make food once green leaves develop. A tray beside a bright window gives the leaves light. A tray kept in a dark cupboard does not give the leaves light for this process. Water helps the seed begin germinating, while light matters later when the leaves make food."
+      }
+    ]
+  },
+  "proposedPlan": {
+    "facts": [
+      {
+        "kind": "source",
+        "claim": "A bean seed contains a young plant inside a protective seed coat.",
+        "spanId": "54cc06df-9b12-4a68-b775-887948c0e5ec"
+      },
+      {
+        "kind": "source",
+        "claim": "In a classroom tray, a seed placed on damp cotton can take up water.",
+        "spanId": "54cc06df-9b12-4a68-b775-887948c0e5ec"
+      },
+      {
+        "kind": "source",
+        "claim": "A seed left on dry cotton does not take up enough water to begin germinating.",
+        "spanId": "54cc06df-9b12-4a68-b775-887948c0e5ec"
+      },
+      {
+        "kind": "source",
+        "claim": "The shoot needs light to make food once green leaves develop.",
+        "spanId": "b287bb6d-fada-48bd-b6fb-be301cde771d"
+      }
+    ],
+    "setting": {
+      "kind": "fictional",
+      "label": "Classroom science corner"
+    },
+    "progression": [
+      {
+        "id": "s0",
+        "role": "dialogue",
+        "text": "This is a fictional scenario. A bean seed contains a young plant inside a protective seed coat. In a classroom tray, a seed placed on damp cotton can take up water.",
+        "title": "Start",
+        "choices": [
+          {
+            "id": "c-damp",
+            "text": "Place the seed on damp cotton",
+            "nextSceneId": "s1",
+            "understanding": 1
+          },
+          {
+            "id": "c-dry",
+            "text": "Place the seed on dry cotton",
+            "nextSceneId": "s2",
+            "understanding": 0
+          }
+        ]
+      },
+      {
+        "id": "s1",
+        "role": "dialogue",
+        "text": "The seed takes up water and begins the changes that let the young plant grow. The shoot needs light to make food once green leaves develop.",
+        "title": "Damp cotton",
+        "choices": [
+          {
+            "id": "c-bright",
+            "text": "Put the tray on the bright window sill",
+            "nextSceneId": "e1",
+            "understanding": 2
+          },
+          {
+            "id": "c-dark",
+            "text": "Store the tray in the dark cupboard",
+            "nextSceneId": "e2",
+            "understanding": 1
+          }
+        ]
+      },
+      {
+        "id": "s2",
+        "role": "dialogue",
+        "text": "A seed left on dry cotton does not take up enough water to begin germinating.",
+        "title": "Dry cotton",
+        "choices": [
+          {
+            "id": "c-bright2",
+            "text": "Put the tray on the bright window sill",
+            "nextSceneId": "e3",
+            "understanding": 1
+          },
+          {
+            "id": "c-dark2",
+            "text": "Store the tray in the dark cupboard",
+            "nextSceneId": "e4",
+            "understanding": 0
+          }
+        ]
+      },
+      {
+        "id": "e1",
+        "role": "ending",
+        "text": "The seed on damp cotton took up water, its seed coat split, a root grew down, and a shoot grew up. Because the tray is beside a bright window, the shoot receives light and can make food.",
+        "title": "Growth in light"
+      },
+      {
+        "id": "e2",
+        "role": "ending",
+        "text": "The seed on damp cotton took up water and began to grow, but the tray is in a dark cupboard, so the shoot does not get the light it needs to make food.",
+        "title": "Growth without light"
+      },
+      {
+        "id": "e3",
+        "role": "ending",
+        "text": "The seed on dry cotton did not take up enough water, so germination never started, even though the tray is placed by a bright window.",
+        "title": "No germination even with light"
+      },
+      {
+        "id": "e4",
+        "role": "ending",
+        "text": "The seed on dry cotton failed to take up water, so it did not germinate, and the tray is also kept in a dark cupboard.",
+        "title": "No germination and no light"
+      }
+    ],
+    "learnerObjective": "Learners will identify how water and light affect the early stages of bean seed germination in a classroom tray.",
+    "fictionalElements": [
+      "Ms. Rivera’s 4th‑grade class",
+      "a tray with cotton wool",
+      "a bright window sill",
+      "a dark cupboard"
+    ],
+    "gameplayObjective": "Choose how to set up the seed tray and where to place it, then see how those choices determine the seed’s growth."
+  },
+  "originalReview": {
+    "issues": [
+      {
+        "code": "unsupported-claim",
+        "reason": "The ending states that \"the seed coat split, a root grew down, and a shoot grew up\". These specific observations are not among the allowedFacts derived from the supplied excerpts, so the claim is not grounded in the provided source material.",
+        "sceneId": "e1"
+      },
+      {
+        "code": "unsupported-claim",
+        "reason": "The ending says the seed \"began to grow\" and implies root and shoot development, but the excerpt supporting root and shoot growth is not listed in the allowedFacts, making this claim unsupported.",
+        "sceneId": "e2"
+      }
+    ],
+    "coherent": true,
+    "grounded": false,
+    "consequential": true,
+    "audienceSuitable": true
+  }
+}

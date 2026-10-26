@@ -2,8 +2,8 @@ import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import { compileExperiencePlan } from "./compile";
 import { specimen } from "./model-plan.examples";
-import { modelPlanSchema, PlanReview, requestPlanStage } from "./model-plan";
-import { requestPaidEdit, serializedRequestBudget } from "./provider";
+import { groqModelPlanSchema, PlanReview, requestPlanStage } from "./model-plan";
+import { GENERATION_LIMITS, GROQ_COMMERCIAL_PRICE, GROQ_GPT_OSS_120B_MODEL, GROQ_RESPONSES_URL, OPENAI_GPT_54_MINI_PRICE, requestPaidEdit, serializedRequestBudget } from "./provider";
 import { groqStrictTransportSchema, inspectGroqStrictSchema, normalizeGroqStrictOutput } from "./strict-transport";
 import { VisualDirectorReviewV1, visualProposalSchema, type VisualDirectorInput } from "./visual-director/model-plan";
 
@@ -11,6 +11,80 @@ const quota = () => ({ ADEENA_GROQ_ACCOUNT_LIMITS_VERIFIED_AT: new Date().toISOS
 const env = () => ({ ADEENA_EXPERIENCE_PROVIDER: "configured-provider", ADEENA_AI_EXECUTION_MODE: "free-development", ADEENA_RUNTIME: "nonproduction-test", ADEENA_GROQ_PLAN: "free", ADEENA_AI_MODEL: "openai/gpt-oss-120b", ADEENA_AI_API_URL: "https://api.groq.com/openai/v1/responses", ADEENA_GROQ_API_KEY: "test-key", ...quota() });
 
 describe("Groq strict transport", () => {
+  it("sends the paid Groq plan without unsupported fields and retains safe failure handling", async () => {
+    const { source } = specimen();
+    const paidEnv = { ADEENA_EXPERIENCE_PROVIDER: "configured-provider", ADEENA_AI_EXECUTION_MODE: "paid-development",
+      ADEENA_AI_API_KEY: "test-key", ADEENA_AI_MODEL: GROQ_GPT_OSS_120B_MODEL, ADEENA_AI_API_URL: GROQ_RESPONSES_URL,
+      ADEENA_AI_PRICE_VERSION: GROQ_COMMERCIAL_PRICE, ADEENA_AI_SPEND_CAP_USD: "1", ADEENA_AI_MAX_EDIT_COST_USD: "0.02",
+      ADEENA_AI_SPEND_AUTHORIZED: "development" };
+    let calls = 0;
+    const fetchImpl = async (url: RequestInfo | URL, init?: RequestInit) => {
+      calls++;
+      expect(String(url)).toBe(GROQ_RESPONSES_URL);
+      const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      expect(body.model).toBe(GROQ_GPT_OSS_120B_MODEL);
+      expect(body).not.toHaveProperty("store");
+      expect(body.reasoning).toEqual({ effort: "low" });
+      expect(body.max_output_tokens).toBe(GENERATION_LIMITS.plan.output);
+      expect(body.text).toMatchObject({ format: { type: "json_schema", strict: true, name: "experience_plan" } });
+      const format = (body.text as { format: { schema: unknown } }).format;
+      expect(inspectGroqStrictSchema(format.schema)).toEqual([]);
+      expect(format.schema).toMatchObject({ required: expect.arrayContaining(["fact1", "fact2", "fact3", "fact4"]), additionalProperties: false });
+      expect((format.schema as { properties: Record<string, unknown> }).properties).not.toHaveProperty("facts");
+      const budget = serializedRequestBudget(body, GENERATION_LIMITS.plan.output);
+      expect(budget.admissionInputTokens).toBeLessThanOrEqual(GENERATION_LIMITS.plan.input);
+      expect(budget.totalAdmissionTokens).toBeLessThan(131_072);
+      return Response.json({ error: { code: "invalid_json_schema", message: "private source must not enter diagnostics" } }, { status: 400 });
+    };
+    const result = await requestPlanStage({ kind: "plan", source, env: paidEnv, fetchImpl: fetchImpl as typeof fetch });
+    expect(calls).toBe(1);
+    expect(result).toMatchObject({ ok: false, callCount: 1, retryCount: 0, usageKind: "estimate", actualCostMicros: 0 });
+    expect(result.attempts?.[0]).toMatchObject({ httpStatus: 400, providerErrorCode: "invalid_json_schema", category: "provider-schema-rejected", billingCertainty: "unknown-external-charge" });
+    expect(JSON.stringify(result.attempts)).not.toContain("private source");
+    let blockedCalls = 0;
+    const blocked = await requestPlanStage({ kind: "plan", source, env: { ...paidEnv, ADEENA_AI_SPEND_CAP_USD: "0.003", ADEENA_AI_MAX_EDIT_COST_USD: "0.003" },
+      fetchImpl: (async () => { blockedCalls++; return new Response("unexpected"); }) as typeof fetch });
+    expect(blocked).toMatchObject({ ok: false, code: "budget-unavailable", callCount: 0 });
+    expect(blockedCalls).toBe(0);
+  });
+
+  it("keeps the OpenAI paid request configuration", async () => {
+    let calls = 0;
+    const result = await requestPaidEdit({
+      env: { ADEENA_EXPERIENCE_PROVIDER: "configured-provider", ADEENA_AI_EXECUTION_MODE: "paid-development",
+        ADEENA_AI_API_KEY: "test-key", ADEENA_AI_MODEL: "gpt-5.4-mini", ADEENA_AI_API_URL: "https://api.openai.com/v1/responses",
+        ADEENA_AI_PRICE_VERSION: OPENAI_GPT_54_MINI_PRICE, ADEENA_AI_SPEND_CAP_USD: "1", ADEENA_AI_MAX_EDIT_COST_USD: "0.02",
+        ADEENA_AI_SPEND_AUTHORIZED: "development" },
+      systemText: "safe system", userText: "safe input",
+      fetchImpl: (async (url, init) => {
+        calls++;
+        expect(String(url)).toBe("https://api.openai.com/v1/responses");
+        const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+        expect(body.store).toBe(false);
+        expect(body.reasoning).toEqual({ effort: "none" });
+        expect(body.text).toMatchObject({ format: { type: "json_schema", strict: true } });
+        return new Response("{}", { status: 400 });
+      }) as typeof fetch,
+    });
+    expect(calls).toBe(1);
+    expect(result).toMatchObject({ ok: false, callCount: 1, retryCount: 0 });
+  });
+
+  it("keeps the original facts array for an OpenAI base plan", async () => {
+    const { source } = specimen();
+    let body: Record<string, unknown> | undefined;
+    const result = await requestPlanStage({ kind: "plan", source,
+      env: { ADEENA_EXPERIENCE_PROVIDER: "configured-provider", ADEENA_AI_EXECUTION_MODE: "paid-development",
+        ADEENA_AI_API_KEY: "test-key", ADEENA_AI_MODEL: "gpt-5.4-mini", ADEENA_AI_API_URL: "https://api.openai.com/v1/responses",
+        ADEENA_AI_PRICE_VERSION: OPENAI_GPT_54_MINI_PRICE, ADEENA_AI_SPEND_CAP_USD: "1", ADEENA_AI_MAX_EDIT_COST_USD: "0.05",
+        ADEENA_AI_SPEND_AUTHORIZED: "development" },
+      fetchImpl: (async (_url, init) => { body = JSON.parse(String(init?.body)); return new Response("{}", { status: 400 }); }) as typeof fetch });
+    expect(result.callCount).toBe(1);
+    const schema = (body?.text as { format: { schema: { properties: Record<string, unknown> } } }).format.schema;
+    expect(schema.properties).toHaveProperty("facts");
+    expect(schema.properties).not.toHaveProperty("fact1");
+  });
+
   it("rejects optional fields, open objects, unsupported oneOf and unknown keywords", () => {
     const bad = { type: "object", properties: { a: { type: "string" } }, required: [], additionalProperties: true, oneOf: [], pattern: ".*" };
     const codes = inspectGroqStrictSchema(bad).map(issue => issue.code);
@@ -55,7 +129,7 @@ describe("Groq strict transport", () => {
     if (!compiled.ok) return;
     const directorInput: VisualDirectorInput = { source, learningObjective: compiled.plan.learnerObjective, locale: compiled.manifest.locale, manifest: compiled.manifest,
       implementedArchetypes: ["process-pathway@1", "venn-two-set@1"], allowedAssetIds: [], practiceMechanics: ["sequence-steps", "classify", "calculate-two-set-cardinality"] };
-    for (const schema of [modelPlanSchema(source), z.toJSONSchema(PlanReview), visualProposalSchema(directorInput), z.toJSONSchema(VisualDirectorReviewV1)]) {
+    for (const schema of [groqModelPlanSchema(source), z.toJSONSchema(PlanReview), visualProposalSchema(directorInput), z.toJSONSchema(VisualDirectorReviewV1)]) {
       const converted = groqStrictTransportSchema(schema);
       expect(converted).toMatchObject({ ok: true });
       if (converted.ok) expect(inspectGroqStrictSchema(converted.schema)).toEqual([]);

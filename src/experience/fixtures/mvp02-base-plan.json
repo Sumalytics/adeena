@@ -1,0 +1,160 @@
+{
+  "facts": [
+    {
+      "kind": "source",
+      "claim": "A bean seed contains a young plant inside a protective seed coat.",
+      "spanId": "7d8f87cf-d852-4c9b-9edc-0d8b3d032f7d"
+    },
+    {
+      "kind": "source",
+      "claim": "In a classroom tray, a seed placed on damp cotton can take up water.",
+      "spanId": "7d8f87cf-d852-4c9b-9edc-0d8b3d032f7d"
+    },
+    {
+      "kind": "source",
+      "claim": "A seed left on dry cotton does not take up enough water to begin germinating.",
+      "spanId": "7d8f87cf-d852-4c9b-9edc-0d8b3d032f7d"
+    },
+    {
+      "kind": "source",
+      "claim": "Taking up water starts the changes that allow the young plant to grow.",
+      "spanId": "7d8f87cf-d852-4c9b-9edc-0d8b3d032f7d"
+    },
+    {
+      "kind": "source",
+      "claim": "After the seed takes up water, its seed coat splits.",
+      "spanId": "afa52572-97bc-4a63-9d8f-04485ca8533e"
+    },
+    {
+      "kind": "source",
+      "claim": "A small root appears first and grows downward.",
+      "spanId": "afa52572-97bc-4a63-9d8f-04485ca8533e"
+    },
+    {
+      "kind": "source",
+      "claim": "The root takes in water from the damp cotton.",
+      "spanId": "afa52572-97bc-4a63-9d8f-04485ca8533e"
+    },
+    {
+      "kind": "source",
+      "claim": "A shoot appears later and grows upward.",
+      "spanId": "afa52572-97bc-4a63-9d8f-04485ca8533e"
+    },
+    {
+      "kind": "source",
+      "claim": "The shoot needs light to make food once green leaves develop.",
+      "spanId": "b565fe83-b933-48db-82a5-19c1aaf0c3c9"
+    },
+    {
+      "kind": "source",
+      "claim": "A tray beside a bright window gives the leaves light.",
+      "spanId": "b565fe83-b933-48db-82a5-19c1aaf0c3c9"
+    },
+    {
+      "kind": "source",
+      "claim": "A tray kept in a dark cupboard does not give the leaves light for this process.",
+      "spanId": "b565fe83-b933-48db-82a5-19c1aaf0c3c9"
+    },
+    {
+      "kind": "source",
+      "claim": "Water helps the seed begin germinating, while light matters later when the leaves make food.",
+      "spanId": "b565fe83-b933-48db-82a5-19c1aaf0c3c9"
+    }
+  ],
+  "setting": {
+    "kind": "fictional",
+    "label": "Sunnyvale Primary School science lab"
+  },
+  "progression": [
+    {
+      "id": "scene1",
+      "role": "dialogue",
+      "text": "This is a fictional scenario. Ms. Rivera asks the class to start a bean seed experiment. You have two trays: one with damp cotton and one with dry cotton. Remember: \"In a classroom tray, a seed placed on damp cotton can take up water.\" and \"A seed left on dry cotton does not take up enough water to begin germinating.\"",
+      "title": "Choose the tray condition",
+      "choices": [
+        {
+          "id": "c1-damp",
+          "text": "Place the bean seed on the damp cotton tray.",
+          "nextSceneId": "scene2-wet",
+          "understanding": 1
+        },
+        {
+          "id": "c1-dry",
+          "text": "Place the bean seed on the dry cotton tray.",
+          "nextSceneId": "scene2-dry",
+          "understanding": 0
+        }
+      ]
+    },
+    {
+      "id": "scene2-wet",
+      "role": "dialogue",
+      "text": "Your seed is on damp cotton, so it can take up water. \"Taking up water starts the changes that allow the young plant to grow.\" Now decide where to keep the tray: near a bright window or in a dark cupboard.",
+      "title": "Position the wet tray",
+      "choices": [
+        {
+          "id": "c2-wet-light",
+          "text": "Put the tray beside a bright window.",
+          "nextSceneId": "ending-a",
+          "understanding": 2
+        },
+        {
+          "id": "c2-wet-dark",
+          "text": "Store the tray in a dark cupboard.",
+          "nextSceneId": "ending-b",
+          "understanding": 1
+        }
+      ]
+    },
+    {
+      "id": "scene2-dry",
+      "role": "dialogue",
+      "text": "Your seed is on dry cotton and cannot take up enough water. \"A seed left on dry cotton does not take up enough water to begin germinating.\" Choose a location for the dry tray.",
+      "title": "What to do with the dry tray",
+      "choices": [
+        {
+          "id": "c2-dry-light",
+          "text": "Place the dry tray beside a bright window.",
+          "nextSceneId": "ending-c",
+          "understanding": 1
+        },
+        {
+          "id": "c2-dry-dark",
+          "text": "Leave the dry tray in a dark cupboard.",
+          "nextSceneId": "ending-d",
+          "understanding": 0
+        }
+      ]
+    },
+    {
+      "id": "ending-a",
+      "role": "ending",
+      "text": "The damp cotton lets the seed take up water. \"After the seed takes up water, its seed coat splits. A small root appears first and grows downward. The root takes in water from the damp cotton. A shoot appears later and grows upward.\" Because the tray is beside a bright window, \"The shoot needs light to make food once green leaves develop.\" The class sees a healthy seedling.",
+      "title": "Successful germination"
+    },
+    {
+      "id": "ending-b",
+      "role": "ending",
+      "text": "Water was absorbed, so the seed coat split and a root grew downward. However the tray is in a dark cupboard, so the shoot receives no light. \"A tray kept in a dark cupboard does not give the leaves light for this process.\" The seed shows a root but no green shoot.",
+      "title": "Root growth only"
+    },
+    {
+      "id": "ending-c",
+      "role": "ending",
+      "text": "Even though the tray is beside a bright window, the seed was on dry cotton. \"A seed left on dry cotton does not take up enough water to begin germinating.\" No root or shoot appears.",
+      "title": "No germination observed"
+    },
+    {
+      "id": "ending-d",
+      "role": "ending",
+      "text": "The seed on dry cotton receives no water and is stored in darkness. Neither water‑driven changes nor light occur. No germination signs are seen.",
+      "title": "Complete failure"
+    }
+  ],
+  "learnerObjective": "Learners will understand how water and light affect the stages of bean seed germination in a classroom tray.",
+  "fictionalElements": [
+    "Ms. Rivera needs the class to show a healthy germination by Friday.",
+    "The class has a limited number of trays and must decide where to place them."
+  ],
+  "gameplayObjective": "Choose actions for the seed tray that illustrate the correct sequence of germination stages and the role of water and light."
+}

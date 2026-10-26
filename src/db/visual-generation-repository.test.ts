@@ -114,7 +114,8 @@ describe("durable visual AI generation", () => {
         content = {
           learnerObjective: "Apply the two source-supported preparation steps.",
           setting: { kind: "fictional", label: "A fictional coffee workshop" },
-          facts: [first, second].map((fact: { claim: string; spanId: string }) => ({ kind: "source", claim: fact.claim, spanId: fact.spanId })),
+          fact1: { kind: "source", claim: first.claim, spanId: first.spanId },
+          fact2: { kind: "source", claim: second.claim, spanId: second.spanId }, fact3: null, fact4: null,
           fictionalElements: ["coffee workshop"], gameplayObjective: "Choose two actions using the source sequence.",
           progression: [
             { id: "start", role: "dialogue", title: "Coffee workshop", text: `This is a fictional scenario. ${first.claim} ${second.claim}`, choices: [choice("use-first", "Begin with the first source stage", "follow-first", 1), choice("use-second", "Begin with the second source stage", "follow-second", 0)] },
