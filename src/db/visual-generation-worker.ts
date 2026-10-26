@@ -64,7 +64,7 @@ async function executeClaim(input: WorkerOptions, claim: VisualWorkerClaim): Pro
           if (!await claimFreeRequest(scope, auth.sessionLimit, auth.dayLimit) || !await claimFreeRequest(scope, auth.sessionLimit, auth.dayLimit)) throw new SourceError("budget-unavailable");
         } else if (!await reserveAnotherEstimate(scope, ceiling, auth.spend.spendCapMicros)) throw new SourceError("budget-unavailable");
         await scope.tx`insert into visual_generation_costs(id,workspace_id,job_id,model,pricing_version,execution_mode,reserved_cost_micros,actual_cost_micros,commercial_estimate_micros,usage_kind,model_calls,created_by)
-          values(${randomUUID()}::uuid,${claim.workspaceId}::uuid,${claim.jobId}::uuid,${free ? auth.model : auth.spend.model},${free ? auth.priceVersion : auth.spend.priceVersion},${free ? "free-development" : "paid-development"},${free ? 0 : ceiling},${free ? 0 : ceiling},${free ? 0 : null},'estimate','[]'::jsonb,${scope.creatorAttributionId}::uuid)
+          values(${randomUUID()}::uuid,${claim.workspaceId}::uuid,${claim.jobId}::uuid,${free ? auth.model : auth.spend.model},${free ? auth.priceVersion : auth.spend.priceVersion},${free ? "free-development" : "paid-development"},${free ? 0 : ceiling},${null},${free ? 0 : null},'estimate','[]'::jsonb,${scope.creatorAttributionId}::uuid)
           on conflict(job_id) do nothing`;
         await scope.tx`update visual_generation_jobs set status='planning',updated_at=now() where id=${claim.jobId}::uuid`;
       }
@@ -82,8 +82,8 @@ async function executeClaim(input: WorkerOptions, claim: VisualWorkerClaim): Pro
     if (prepared.status === "planning") {
       await markProviderStart(input.sql, claim, "visualPlan");
       providerRequestOutstanding = true;
-      const result = await requestVisualDirectorStage({ kind: "visualPlan", directorInput: prepared.directorInput, env, fetchImpl: input.fetchImpl, schedules: input.schedules });
-      if (!result.ok) return finish(input.sql, claim, free, ceiling, "failed", result.code ?? "provider-unavailable", [{ code: result.code ?? "provider-unavailable", message: result.diagnostic ?? "The visual planner did not return an acceptable result." }], started, undefined, undefined, undefined, { stage: "visualPlan", result });
+      const result = await requestVisualDirectorStage({ kind: "visualPlan", jobId: claim.jobId, directorInput: prepared.directorInput, env, fetchImpl: input.fetchImpl, schedules: input.schedules });
+      if (!result.ok) return finish(input.sql, claim, free, ceiling, "failed", result.code ?? "provider-unavailable", [{ code: result.code ?? "provider-unavailable", message: "The visual planner did not return an acceptable result." }], started, undefined, undefined, undefined, { stage: "visualPlan", result });
       const parsed = VisualDirectorProposalV1.safeParse(result.content);
       if (!parsed.success) return finish(input.sql, claim, free, ceiling, "failed", "proposal.schema", [{ code: "proposal.schema", message: "The visual proposal did not match its versioned contract." }], started, undefined, undefined, undefined, { stage: "visualPlan", result });
       proposal = parsed.data;
@@ -105,8 +105,8 @@ async function executeClaim(input: WorkerOptions, claim: VisualWorkerClaim): Pro
     if (!proposal || proposal.result !== "supported") throw new SourceError("invalid-generation");
     await markProviderStart(input.sql, claim, "visualReview");
     providerRequestOutstanding = true;
-    const review = await requestVisualDirectorStage({ kind: "visualReview", directorInput: prepared.directorInput, proposal, env, fetchImpl: input.fetchImpl, schedules: input.schedules });
-    if (!review.ok) return finish(input.sql, claim, free, ceiling, "failed", review.code ?? "provider-unavailable", [{ code: review.code ?? "provider-unavailable", message: review.diagnostic ?? "The visual reviewer did not return an acceptable result." }], started, proposal, review.content, undefined, { stage: "visualReview", result: review });
+    const review = await requestVisualDirectorStage({ kind: "visualReview", jobId: claim.jobId, directorInput: prepared.directorInput, proposal, env, fetchImpl: input.fetchImpl, schedules: input.schedules });
+    if (!review.ok) return finish(input.sql, claim, free, ceiling, "failed", review.code ?? "provider-unavailable", [{ code: review.code ?? "provider-unavailable", message: "The visual reviewer did not return an acceptable result." }], started, proposal, review.content, undefined, { stage: "visualReview", result: review });
     if (!visualReviewPasses(review.content)) return finish(input.sql, claim, free, ceiling, "failed", "review.rejected", [{ code: "review.rejected", message: "The independent model review rejected the visual proposal." }], started, proposal, review.content, undefined, { stage: "visualReview", result: review });
     const checked = validateVisualDirectorProposal(proposal, prepared.directorInput);
     if (!checked.ok || checked.status === "unsupported-visual-treatment") throw new SourceError("invalid-experience");
@@ -133,7 +133,7 @@ async function markProviderStart(sql: Sql, claim: VisualWorkerClaim, stage: "vis
 }
 
 async function appendStage(tx: Sql, claim: VisualWorkerClaim, stage: "visualPlan" | "visualReview", result: PaidEditResult) {
-  const call = { stage, status: result.ok ? "completed" : "failed", responseId: result.responseId, inputTokens: result.inputTokens, cachedInputTokens: result.cachedInputTokens, outputTokens: result.outputTokens, reasoningTokens: result.reasoningTokens, callCount: result.callCount, retryCount: result.retryCount, usageKind: result.usageKind, actualCostMicros: result.actualCostMicros, estimatedCostMicros: result.estimatedCostMicros, commercialEstimateMicros: result.commercialEstimateMicros, releaseReservation: result.releaseReservation };
+  const call = { stage, status: result.ok ? "completed" : "failed", responseId: result.responseId, inputTokens: result.inputTokens, cachedInputTokens: result.cachedInputTokens, outputTokens: result.outputTokens, reasoningTokens: result.reasoningTokens, callCount: result.callCount, retryCount: result.retryCount, usageKind: result.usageKind, actualCostMicros: result.usageKind === "actual" ? result.actualCostMicros : result.releaseReservation || result.callCount === 0 ? 0 : null, estimatedCostMicros: result.estimatedCostMicros, commercialEstimateMicros: result.commercialEstimateMicros, releaseReservation: result.releaseReservation, billingCertainty: result.attempts?.at(-1)?.billingCertainty ?? (result.callCount ? "unknown-external-charge" : "confirmed-nonbillable"), attempts: result.attempts ?? [] };
   await tx`update visual_generation_costs set input_tokens=input_tokens+${result.inputTokens},cached_input_tokens=cached_input_tokens+${result.cachedInputTokens},output_tokens=output_tokens+${result.outputTokens},reasoning_tokens=reasoning_tokens+${result.reasoningTokens},call_count=call_count+${result.callCount},retry_count=retry_count+${result.retryCount},model_calls=model_calls||${JSON.stringify([call])}::text::jsonb where job_id=${claim.jobId}::uuid`;
 }
 
@@ -148,15 +148,16 @@ async function finishInScope(scope: { tx: Sql; creatorAttributionId: string }, c
     const rows = await scope.tx<{ call_count: number; input_tokens: number; output_tokens: number; model_calls: unknown }[]>`select call_count,input_tokens,output_tokens,model_calls from visual_generation_costs where job_id=${claim.jobId}::uuid for update`;
     const cost = rows[0];
     const calls = Array.isArray(cost?.model_calls) ? cost.model_calls as Record<string, unknown>[] : [];
-    const actual = calls.reduce((sum, call) => sum + (call.releaseReservation === true ? 0 : Number(call.actualCostMicros ?? call.estimatedCostMicros ?? 0)), 0);
+    const confirmed = calls.reduce((sum, call) => sum + (call.usageKind === "actual" ? Number(call.actualCostMicros ?? 0) : 0), 0);
+    const possible = calls.reduce((sum, call) => sum + (call.releaseReservation === true || Number(call.callCount ?? 0) === 0 ? 0 : call.usageKind === "actual" ? Number(call.actualCostMicros ?? 0) : Number(call.estimatedCostMicros ?? 0)), 0);
     const commercial = free ? calls.reduce((sum, call) => sum + Number(call.commercialEstimateMicros ?? 0), 0) : null;
-    const uncertain = calls.some((call) => call.usageKind === "estimate");
-    if (!free) await reconcileReservation(scope, ceiling, actual);
+    const uncertain = calls.some((call) => Number(call.callCount ?? 0) > 0 && call.releaseReservation !== true && call.usageKind !== "actual");
+    if (!free) await reconcileReservation(scope, ceiling, possible);
     if (free) await releaseUnusedFreeRequests(scope, 2 - Number(cost?.call_count ?? 0), claim.jobId, "visual");
-    await scope.tx`update visual_generation_costs set actual_cost_micros=${free ? 0 : actual},commercial_estimate_micros=${commercial},usage_kind=${uncertain ? "estimate" : calls.length ? "actual" : "none"} where job_id=${claim.jobId}::uuid`;
+    await scope.tx`update visual_generation_costs set actual_cost_micros=${uncertain ? null : free ? 0 : confirmed},commercial_estimate_micros=${commercial},usage_kind=${uncertain ? "estimate" : calls.some(call => call.usageKind === "actual") ? "actual" : "none"} where job_id=${claim.jobId}::uuid`;
     const durationMs = Math.max(0, Date.now() - started);
-    await scope.tx`update visual_generation_jobs set status=${status},proposal=${proposal ? JSON.stringify(proposal) : null}::text::jsonb,instructional_plan=${proposal?.result === "supported" ? JSON.stringify(proposal.plan) : null}::text::jsonb,model_review=${review ? JSON.stringify(review) : null}::text::jsonb,diagnostics=${JSON.stringify(diagnostics)}::text::jsonb,association_id=${associationId ?? null}::uuid,failure_code=${failureCode},duration_ms=${durationMs},provider_stage=null,provider_started_at=null,lease_owner=null,lease_token=null,lease_expires_at=null,completed_at=now(),updated_at=now() where id=${claim.jobId}::uuid`;
-    return { jobId: claim.jobId, status: status === "ready" ? "ready" : status === "unsupported" ? "unsupported-visual-treatment" : "rejected", associationId, reason: failureCode ?? undefined, diagnostics, usage: { callCount: Number(cost?.call_count ?? 0), inputTokens: Number(cost?.input_tokens ?? 0), outputTokens: Number(cost?.output_tokens ?? 0), actualCostMicros: free ? 0 : actual, commercialEstimateMicros: commercial, durationMs }, replayed: false };
+    await scope.tx`update visual_generation_jobs set status=${status},proposal=${proposal ? JSON.stringify(proposal) : null}::text::jsonb,instructional_plan=${proposal?.result === "supported" ? JSON.stringify(proposal.plan) : null}::text::jsonb,model_review=${review ? JSON.stringify(review) : null}::text::jsonb,diagnostics=${JSON.stringify(diagnostics)}::text::jsonb,association_id=${associationId ?? null}::uuid,failure_code=${failureCode},uncertain_charge=${uncertain},duration_ms=${durationMs},provider_stage=null,provider_started_at=null,lease_owner=null,lease_token=null,lease_expires_at=null,completed_at=now(),updated_at=now() where id=${claim.jobId}::uuid`;
+    return { jobId: claim.jobId, status: status === "ready" ? "ready" : status === "unsupported" ? "unsupported-visual-treatment" : "rejected", associationId, reason: failureCode ?? undefined, diagnostics, usage: { callCount: Number(cost?.call_count ?? 0), inputTokens: Number(cost?.input_tokens ?? 0), outputTokens: Number(cost?.output_tokens ?? 0), actualCostMicros: uncertain ? null : free ? 0 : confirmed, commercialEstimateMicros: commercial, durationMs }, replayed: false };
 }
 
 async function failKnown(sql: Sql, claim: VisualWorkerClaim, code: string, started: number) {

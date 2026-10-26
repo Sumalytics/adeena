@@ -151,6 +151,7 @@ export function visualDirectorPayload(input: VisualDirectorInput, proposal?: Vis
 
 export async function requestVisualDirectorStage(input: {
   kind: "visualPlan" | "visualReview";
+  jobId?: string;
   directorInput: VisualDirectorInput;
   proposal?: VisualDirectorProposal;
   env: ProviderEnv;
@@ -159,6 +160,8 @@ export async function requestVisualDirectorStage(input: {
 }): Promise<PaidEditResult> {
   return requestPaidEdit({
     env: input.env,
+    jobId: input.jobId,
+    stage: input.kind,
     fetchImpl: input.fetchImpl,
     schedules: input.schedules,
     systemText: input.kind === "visualPlan" ? VISUAL_PLAN_INSTRUCTIONS : VISUAL_REVIEW_INSTRUCTIONS,

@@ -289,5 +289,23 @@ describe("durable visual AI generation", () => {
     await child(process.execPath, [path.resolve("scripts/testing/claim-visual-job.mjs")], { ...process.env, ADEENA_VISUAL_WORKER_DATABASE_URL: workerUrl }).done;
     const [exhaustedJob] = await admin`select status,failure_code,attempt_count from visual_generation_jobs where id=${exhausted.jobId}::uuid`;
     expect(exhaustedJob).toMatchObject({ status: "failed", failure_code: "worker-attempts-exhausted", attempt_count: 3 });
+
+    const rejectedVisual = await createQueuedVisual();
+    const paidWorkerEnv = { ...workerEnv,
+      ADEENA_AI_EXECUTION_MODE: "paid-development", ADEENA_AI_API_KEY: "paid-test-key",
+      ADEENA_AI_PRICE_VERSION: "groq-gpt-oss-120b-ondemand-2026-10", ADEENA_AI_SPEND_CAP_USD: "1",
+      ADEENA_AI_MAX_EDIT_COST_USD: "0.02", ADEENA_AI_SPEND_AUTHORIZED: "development",
+      ADEENA_VISUAL_WORKER_FAKE_REJECT_VISUAL_PLAN: "1",
+    };
+    await writeFile(callLog, "");
+    const rejectedResult = await child(process.execPath, [workerFile, "--once"], paidWorkerEnv).done;
+    expect(rejectedResult.code, rejectedResult.stderr).toBe(0);
+    const [rejectedCost] = await admin`select actual_cost_micros,usage_kind,call_count,model_calls from visual_generation_costs where job_id=${rejectedVisual.jobId}::uuid`;
+    expect((await readFile(callLog, "utf8")).trim(), `${rejectedResult.stdout}\n${rejectedResult.stderr}\n${JSON.stringify(rejectedCost)}`).toBe("experience_visualPlan");
+    expect(rejectedCost).toMatchObject({ actual_cost_micros: null, usage_kind: "estimate", call_count: 1 });
+    expect(rejectedCost.model_calls[0].attempts[0]).toMatchObject({ jobId: rejectedVisual.jobId, stage: "visualPlan", httpStatus: 400, category: "provider-request-invalid", billingCertainty: "unknown-external-charge" });
+    expect(JSON.stringify(rejectedCost.model_calls)).not.toContain(sourceText);
+    const [rejectedJob] = await admin`select status,uncertain_charge from visual_generation_jobs where id=${rejectedVisual.jobId}::uuid`;
+    expect(rejectedJob).toMatchObject({ status: "failed", uncertain_charge: true });
   }, 60_000);
 });

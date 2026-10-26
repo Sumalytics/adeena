@@ -164,7 +164,7 @@ export type CreatorEditProposal = {
   usage: {
     kind: "none" | "estimate" | "actual";
     currency: "USD";
-    actualCostMicros: number;
+    actualCostMicros: number | null;
     estimatedCostMicros: number;
     callCount: number;
     inputTokens: number;

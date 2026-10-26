@@ -1266,7 +1266,7 @@ describe("postgresql source persistence", () => {
         cached_input_tokens::int as cached, reasoning_tokens::int as reasoning
       from experience_edit_costs where edit_job_id = ${modeled.proposal.editJobId}::uuid
     `;
-    expect(modelCost[0]).toMatchObject({ provider: "configured-provider", model: "test-model", calls: 1, actual: 50, response: "resp_test", cached: 0, reasoning: 0 });
+    expect(modelCost[0]).toMatchObject({ provider: "configured-provider", model: "test-model", calls: 1, actual: 50, response: expect.stringMatching(/^sha256_[a-f0-9]{64}$/), cached: 0, reasoning: 0 });
     const reserved = await admin<{ reserved: number }[]>`select reserved_micros::int as reserved from adeena_edit_spend where id = 'development'`;
     expect(reserved[0]?.reserved).toBe(50);
     let freeCalls = 0;
@@ -1338,7 +1338,7 @@ describe("postgresql source persistence", () => {
         call_count::int as calls, provider_response_id as response, remaining_requests::int as remaining
       from experience_edit_costs where edit_job_id = ${freed.proposal.editJobId}::uuid
     `;
-    expect(freeCost[0]).toMatchObject({ mode: "free-development", actual: 0, commercial: 21, calls: 1, response: "resp_free", remaining: 8 });
+    expect(freeCost[0]).toMatchObject({ mode: "free-development", actual: 0, commercial: 21, calls: 1, response: expect.stringMatching(/^sha256_[a-f0-9]{64}$/), remaining: 8 });
     const quota = await admin<{ session_requests: number; day_requests: number }[]>`
       select session_requests::int, day_requests::int from adeena_free_quota where id = 'development'
     `;
@@ -1503,6 +1503,23 @@ describe("postgresql source persistence", () => {
       select count(*)::int as total from experience_versions where document_version_id = ${doseVersion}::uuid
     `;
     expect(doseVersions[0]?.total).toBe(0);
+    const rejectedEditKey = randomUUID();
+    let rejectedEditCalls = 0;
+    const rejectedEdit = await proposeExperienceEdit({
+      sql, identity: room.identity, workspaceId: room.workspaceId,
+      baseVersionId: simplified.proposal.proposedVersionId,
+      expectedBaseVersionId: simplified.proposal.proposedVersionId,
+      instruction: modelInstruction, idempotencyKey: rejectedEditKey, authorizeEdit: true, provider: "configured-provider",
+      env: modelEnv, schedules: modelSchedules,
+      fetchImpl: (async () => { rejectedEditCalls++; return Response.json({ error: { code: "invalid_request_error", message: "Echo MODEL-SENTINEL test-key" } }, { status: 400 }); }) as typeof fetch,
+    });
+    expect(rejectedEdit).toMatchObject({ kind: "stop", code: "provider-unavailable" });
+    expect(rejectedEditCalls).toBe(1);
+    const [editDiagnostic] = await admin`select j.validation,c.actual_cost_micros,c.usage_kind from experience_edit_jobs j join experience_edit_costs c on c.edit_job_id=j.id where j.idempotency_key=${rejectedEditKey}::uuid`;
+    expect(editDiagnostic).toMatchObject({ actual_cost_micros: null, usage_kind: "estimate" });
+    expect(editDiagnostic.validation.providerAttempts[0]).toMatchObject({ stage: "edit", httpStatus: 400, category: "provider-request-invalid", billingCertainty: "unknown-external-charge" });
+    expect(JSON.stringify(editDiagnostic.validation)).not.toContain("MODEL-SENTINEL");
+    expect(JSON.stringify(editDiagnostic.validation)).not.toContain("test-key");
   });
 
   describe("creator workflows", () => {

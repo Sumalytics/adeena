@@ -39,7 +39,7 @@ export async function generateModelPlan(input: Input): Promise<Compilation> {
         (id,workspace_id,job_id,provider,model,pricing_version,input_tokens,output_tokens,call_count,retry_count,
           estimated_cost_micros,actual_cost_micros,currency,usage_kind,created_by,execution_mode,commercial_estimate_micros,model_calls)
         values (${randomUUID()}::uuid,${input.workspaceId}::uuid,${input.jobId}::uuid,'configured-provider',${model},${price},0,0,2,0,
-          ${free ? 0 : ceiling},${free ? 0 : ceiling},'USD','estimate',${workspace.userId}::uuid,
+          ${free ? 0 : ceiling},${null},'USD','estimate',${workspace.userId}::uuid,
           ${free ? "free-development" : "paid-development"},${free ? ceiling : null},
           '[{"stage":"plan","status":"reserved"},{"stage":"review","status":"reserved"}]'::jsonb)`;
     });
@@ -50,11 +50,11 @@ export async function generateModelPlan(input: Input): Promise<Compilation> {
   const results: { stage: "plan" | "review"; result: PaidEditResult }[] = [];
   let outcome: Compilation;
   try {
-    const planned = await requestPlanStage({ kind: "plan", source, env, fetchImpl: input.fetchImpl, schedules: input.schedules });
+    const planned = await requestPlanStage({ kind: "plan", jobId: input.jobId, source, env, fetchImpl: input.fetchImpl, schedules: input.schedules });
     results.push({ stage: "plan", result: planned });
     outcome = planned.ok ? parseSourcePlan(planned.content, source) : providerFailure(planned);
     if (outcome.ok) {
-      const reviewed = await requestPlanStage({ kind: "review", source, plan: outcome.plan, env, fetchImpl: input.fetchImpl, schedules: input.schedules });
+      const reviewed = await requestPlanStage({ kind: "review", jobId: input.jobId, source, plan: outcome.plan, env, fetchImpl: input.fetchImpl, schedules: input.schedules });
       results.push({ stage: "review", result: reviewed });
       if (!reviewed.ok) outcome = providerFailure(reviewed);
       else if (!reviewPasses(reviewed.content)) outcome = rejected("plan.review-rejected", "The independent source and outcome review rejected this plan.");
@@ -64,17 +64,21 @@ export async function generateModelPlan(input: Input): Promise<Compilation> {
     return { ...rejected("provider-unavailable", "Model generation stopped; its reservation is retained."), code: "provider-unavailable" };
   }
   await withWorkspace(input.sql, input.identity, input.workspaceId, async (workspace) => {
-    const uncertain = results.some(({ result }) => result.usageKind === "estimate");
-    const actual = results.reduce((sum, { result }) => sum + (result.releaseReservation ? 0 : result.usageKind === "actual" ? result.actualCostMicros : result.usageKind === "estimate" ? result.estimatedCostMicros : 0), 0);
-    if (!free) await reconcileReservation(workspace, ceiling, actual);
+    const uncertain = results.some(({ result }) => result.callCount > 0 && !result.releaseReservation && result.usageKind !== "actual");
+    const confirmed = results.reduce((sum, { result }) => sum + (result.usageKind === "actual" ? result.actualCostMicros : 0), 0);
+    const possible = results.reduce((sum, { result }) => sum + (result.releaseReservation || result.callCount === 0 ? 0 : result.usageKind === "actual" ? result.actualCostMicros : result.estimatedCostMicros), 0);
+    if (!free) await reconcileReservation(workspace, ceiling, possible);
     const total = (key: "inputTokens" | "cachedInputTokens" | "outputTokens" | "reasoningTokens" | "callCount" | "retryCount") => results.reduce((sum, { result }) => sum + result[key], 0);
     if (free) await releaseUnusedFreeRequests(workspace, 2 - total("callCount"), input.jobId);
     const calls = results.map(({ stage, result }) => ({ stage, status: result.ok ? "completed" : "failed", responseId: result.responseId,
       inputTokens: result.inputTokens, outputTokens: result.outputTokens, reasoningTokens: result.reasoningTokens,
-      usageKind: result.usageKind, ...(result.ok ? stage === "review" ? { review: result.content } : { proposedPlan: result.content } : {}) }));
+      usageKind: result.usageKind, billingCertainty: result.attempts?.at(-1)?.billingCertainty ?? (result.callCount ? "unknown-external-charge" : "confirmed-nonbillable"),
+      confirmedCostMicros: result.usageKind === "actual" ? result.actualCostMicros : result.releaseReservation || result.callCount === 0 ? 0 : null,
+      estimatedPossibleCostMicros: result.releaseReservation || result.callCount === 0 ? 0 : result.usageKind === "actual" ? result.actualCostMicros : result.estimatedCostMicros,
+      attempts: result.attempts ?? [], ...(result.ok ? stage === "review" ? { review: result.content } : { proposedPlan: result.content } : {}) }));
     await workspace.tx`update experience_generation_costs set input_tokens=${total("inputTokens")},cached_input_tokens=${total("cachedInputTokens")},
       output_tokens=${total("outputTokens")},reasoning_tokens=${total("reasoningTokens")},call_count=${total("callCount")},retry_count=${total("retryCount")},
-      actual_cost_micros=${free ? 0 : actual},usage_kind=${uncertain ? "estimate" : results.some(({result}) => result.usageKind === "actual") ? "actual" : "none"},
+      actual_cost_micros=${uncertain ? null : free ? 0 : confirmed},estimated_cost_micros=${free ? 0 : possible},usage_kind=${uncertain ? "estimate" : results.some(({result}) => result.usageKind === "actual") ? "actual" : "none"},
       commercial_estimate_micros=${free ? results.reduce((sum,{result})=>sum+(result.commercialEstimateMicros ?? 0),0) : null},
       model_calls=${JSON.stringify(calls)}::jsonb where job_id=${input.jobId}::uuid and workspace_id=${input.workspaceId}::uuid`;
   });

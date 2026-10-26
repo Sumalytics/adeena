@@ -126,9 +126,10 @@ export function modelPlanSchema(source: GenerationSource) {
   };
 }
 
-export async function requestPlanStage(input: { kind: "plan" | "review"; source: GenerationSource; plan?: ExperiencePlan; env: ProviderEnv; fetchImpl?: typeof fetch; schedules?: Record<string, RateSchedule> }): Promise<PaidEditResult> {
+export async function requestPlanStage(input: { kind: "plan" | "review"; jobId?: string; source: GenerationSource; plan?: ExperiencePlan; env: ProviderEnv; fetchImpl?: typeof fetch; schedules?: Record<string, RateSchedule> }): Promise<PaidEditResult> {
   const context = { topic: input.source.topicTitle, audience: input.source.audienceLabel, ageBand: input.source.ageBand, excerpts: input.source.spans, allowedFacts: allowedFacts(input.source), ...(input.plan ? { plan: input.plan } : {}) };
   return requestPaidEdit({ env: input.env, fetchImpl: input.fetchImpl, schedules: input.schedules,
+    jobId: input.jobId, stage: input.kind,
     systemText: input.kind === "plan" ? PLAN_INSTRUCTIONS : REVIEW_INSTRUCTIONS,
     userText: JSON.stringify(context), structuredGeneration: { kind: input.kind, schema: input.kind === "plan" ? modelPlanSchema(input.source) : z.toJSONSchema(PlanReview) },
     confirmRetry: async () => false,

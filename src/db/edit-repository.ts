@@ -1,4 +1,4 @@
-import { claimFreeRequest, reserveAnotherEstimate, reconcileReservation } from "./model-budget";
+import { claimFreeRequest, reconcileReservation } from "./model-budget";
 import { randomUUID } from "node:crypto";
 import type { Sql } from "postgres";
 import { z } from "zod";
@@ -27,6 +27,7 @@ import {
   type RevisionResult,
 } from "@/experience/edit";
 import { groqGraphTransportSchema, groqTransportSchema } from "@/experience/groq-edit";
+import type { ProviderAttemptDiagnostic } from "@/experience/provider-diagnostics";
 import {
   COMPILER_VERSION,
   CONFIGURED_PROVIDER,
@@ -265,13 +266,14 @@ type EditUsage = {
   callCount: number;
   retryCount: number;
   estimatedCostMicros: number;
-  actualCostMicros: number;
+  actualCostMicros: number | null;
   commercialEstimateMicros: number | null;
   usageKind: "none" | "estimate" | "actual";
   executionMode: "fixture" | "paid-development" | "free-development";
   latencyMs: number | null;
   remainingRequests: number | null;
   remainingTokens: number | null;
+  providerAttempts?: ProviderAttemptDiagnostic[];
 };
 
 const FIXTURE_USAGE: EditUsage = {
@@ -293,6 +295,7 @@ const FIXTURE_USAGE: EditUsage = {
   latencyMs: null,
   remainingRequests: null,
   remainingTokens: null,
+  providerAttempts: [],
 };
 
 type Prepared = Run | { kind: "done"; outcome: EditOutcome };
@@ -454,6 +457,7 @@ async function complete(workspace: AuthorizedWorkspace, run: Run, outcome: Revis
   }
   if (!outcome.ok) {
     await recordCost(workspace, run.jobId, usage);
+    if (usage.providerAttempts?.length) await workspace.tx`update experience_edit_jobs set validation=${JSON.stringify({ providerAttempts: usage.providerAttempts })}::text::jsonb where id=${run.jobId}::uuid and workspace_id=${workspace.workspaceId}::uuid`;
     await failJob(workspace, run.jobId, outcome.code);
     return stopped(outcome.code, outcome.alternatives);
   }
@@ -485,7 +489,7 @@ async function complete(workspace: AuthorizedWorkspace, run: Run, outcome: Revis
     update experience_edit_jobs
     set status = 'ready', proposed_version_id = ${outcome.manifest.versionId}::uuid, permanent = true,
       review_status = ${reviewStatus}, intent = ${outcome.plan.intent}, plan = ${JSON.stringify(outcome.plan)}::jsonb,
-      patch = ${JSON.stringify(outcome.patch)}::jsonb, validation = ${JSON.stringify(outcome.validation)}::jsonb,
+      patch = ${JSON.stringify(outcome.patch)}::jsonb, validation = ${JSON.stringify({ ...outcome.validation, providerAttempts: usage.providerAttempts ?? [] })}::jsonb,
       summary = ${outcome.plan.summary}, graph_changed = ${outcome.validation.graphChanged},
       uncertainty = ${outcome.plan.uncertainty}, review_note = ${reviewNote},
       scenes_touched = ${outcome.validation.scenesTouched}, choices_changed = ${outcome.validation.choicesChanged},
@@ -710,7 +714,7 @@ async function proposalFrom(workspace: AuthorizedWorkspace, job: ProposalRow, re
     usage: {
       kind,
       currency: "USD",
-      actualCostMicros: Number(row?.actual_cost_micros ?? 0),
+      actualCostMicros: row?.actual_cost_micros === null ? null : Number(row?.actual_cost_micros ?? 0),
       estimatedCostMicros: Number(row?.estimated_cost_micros ?? 0),
       callCount,
       inputTokens: Number(row?.input_tokens ?? 0),
@@ -747,6 +751,7 @@ async function produce(input: {
     priceVersion: auth.spend.priceVersion,
     callCount: 1,
     estimatedCostMicros: estimated,
+    actualCostMicros: null,
     usageKind: "estimate",
     executionMode: "paid-development",
   }, auth.spend.spendCapMicros));
@@ -754,21 +759,16 @@ async function produce(input: {
     const code = reserved.status === "over-cap" ? "budget-unavailable" as const : "provider-unavailable" as const;
     return { outcome: { ok: false as const, code, alternatives: [] as string[] }, usage: quietUsage(), persistFailure: true };
   }
-  let extraReserved = 0;
   const paid = await requestPaidEdit({
     env,
+    jobId: run.jobId,
+    stage: "edit",
     systemText: EDIT_MODEL_INSTRUCTIONS,
     userText: editModelContext(run.manifest, run.instruction, run.sceneId ?? undefined),
     fetchImpl: input.fetchImpl,
     schedules: input.schedules,
-    remainingAfterReserveMicros: auth.spend.spendCapMicros - reserved.reservedMicros,
-    confirmRetry: async () => {
-      const accepted = await withWorkspace(input.sql, input.identity, input.workspaceId, (workspace) => reserveAnotherEstimate(workspace, estimated, auth.spend.spendCapMicros));
-      if (accepted) extraReserved += 1;
-      return accepted;
-    },
   });
-  const reservedMicros = estimated * (1 + extraReserved);
+  const reservedMicros = estimated;
   const keptMicros = paid.releaseReservation ? 0 : paid.usageKind === "actual" ? paid.actualCostMicros : reservedMicros;
   await withWorkspace(input.sql, input.identity, input.workspaceId, (workspace) => reconcileReservation(workspace, reservedMicros, keptMicros));
   const usage: EditUsage = {
@@ -783,13 +783,14 @@ async function produce(input: {
     callCount: Math.max(1, paid.callCount),
     retryCount: paid.retryCount,
     estimatedCostMicros: paid.estimatedCostMicros,
-    actualCostMicros: paid.releaseReservation ? 0 : paid.usageKind === "actual" ? paid.actualCostMicros : reservedMicros,
+    actualCostMicros: paid.releaseReservation ? 0 : paid.usageKind === "actual" ? paid.actualCostMicros : null,
     commercialEstimateMicros: null,
     usageKind: paid.usageKind,
     executionMode: "paid-development",
     latencyMs: paid.latencyMs,
     remainingRequests: paid.remainingRequests,
     remainingTokens: paid.remainingTokens,
+    providerAttempts: paid.attempts ?? [],
   };
   if (!paid.ok || !paid.content) {
     const code = paid.code === "budget-unavailable" || paid.code === "invalid-experience" || paid.code === "provider-unavailable" || paid.code === "generation-unavailable" || paid.code === "unsupported-edit" ? paid.code : "provider-unavailable";
@@ -830,13 +831,14 @@ async function produceFree(
   const dialogue = prepared && prepared.ok ? prepared.target : undefined;
   const paid = await requestPaidEdit({
     env,
+    jobId: run.jobId,
+    stage: "edit",
     systemText: kind === "graph" ? GROQ_GRAPH_INSTRUCTIONS : GROQ_DIALOGUE_INSTRUCTIONS,
     userText: dialogue ? dialogueEditContext(run.instruction, dialogue, run.audience ?? undefined) : graphEditContext(run.manifest, run.instruction, run.audience ?? undefined),
     fetchImpl: input.fetchImpl,
     outputSchema: dialogue ? groqTransportSchema(dialogue.sceneId, dialogue.editableParts.length) : groqGraphTransportSchema(run.manifest),
     editMode: kind,
     dialogueTarget: dialogue,
-    confirmRetry: () => withWorkspace(input.sql, input.identity, input.workspaceId, (workspace) => claimFreeRequest(workspace, auth.sessionLimit, auth.dayLimit)),
   });
   const usage: EditUsage = {
     ...baseline,
@@ -854,6 +856,7 @@ async function produceFree(
     latencyMs: paid.latencyMs,
     remainingRequests: paid.remainingRequests,
     remainingTokens: paid.remainingTokens,
+    providerAttempts: paid.attempts ?? [],
   };
   if (!paid.ok || !paid.content) {
     const code = paid.code === "budget-unavailable" || paid.code === "invalid-experience" || paid.code === "provider-unavailable" || paid.code === "generation-unavailable" || paid.code === "unsupported-edit" ? paid.code : "provider-unavailable";

@@ -9,7 +9,7 @@ globalThis.fetch = async (input, init) => {
   if (url !== "https://api.groq.com/openai/v1/responses") return nativeFetch(input, init);
   calls += 1;
   const body = JSON.parse(String(init?.body));
-  const context = JSON.parse(body.input);
+  const context = JSON.parse(typeof body.input === "string" ? body.input : body.input.find((item) => item.role === "user").content);
   let content;
   if (body.text.format.name === "experience_plan") {
     const [first, second] = context.allowedFacts;
@@ -54,6 +54,9 @@ globalThis.fetch = async (input, init) => {
   if (process.env.ADEENA_VISUAL_WORKER_FAKE_CALL_LOG) appendFileSync(process.env.ADEENA_VISUAL_WORKER_FAKE_CALL_LOG, `${body.text.format.name}\n`);
   process.stdout.write(`[visual-worker-fake] ${body.text.format.name} call ${calls}\n`);
   await new Promise((resolve) => setTimeout(resolve, delayMs));
+  if (process.env.ADEENA_VISUAL_WORKER_FAKE_REJECT_VISUAL_PLAN === "1" && body.text.format.name === "experience_visualPlan") {
+    return Response.json({ error: { code: "invalid_request_error", message: `Echo ${context.excerpts[0]?.excerpt ?? ""}` } }, { status: 400 });
+  }
   return Response.json({ id: `mock_response_${calls}`, status: "completed", output: [{ type: "message", content: [{ type: "output_text", text: JSON.stringify(content) }] }], usage: { input_tokens: 900, output_tokens: 700, output_tokens_details: { reasoning_tokens: 5 } } });
 };
 

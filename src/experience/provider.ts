@@ -4,6 +4,7 @@ import type { SourceErrorCode } from "@/source/errors";
 import type { DialogueTarget } from "./edit";
 import { groqTransportSchema, mapGroqGraphTransport, mapGroqTransport, readGroqAssistantPayload } from "./groq-edit";
 import { groqStrictTransportSchema, normalizeGroqStrictOutput } from "./strict-transport";
+import { providerAttempt, safeProviderErrorCode, safeProviderRequestId, type ProviderAttemptDiagnostic } from "./provider-diagnostics";
 
 export const FIXTURE_PROVIDER = "deterministic-fixture" as const;
 export const CONFIGURED_PROVIDER = "configured-provider" as const;
@@ -20,12 +21,10 @@ export type StructuredGeneration = { kind: keyof typeof GENERATION_LIMITS; schem
 export const COMPILER_VERSION = "1" as const;
 const MODEL_NAME = /^[a-z0-9@.:/-]{1,80}$/;
 const PRICE_NAME = /^[a-z0-9@.-]{1,40}$/;
-const RESPONSE_ID = /^[A-Za-z0-9_-]{1,80}$/;
 const MAX_INPUT_TOKENS = 4_000;
 const MAX_OUTPUT_TOKENS = 800;
 const FREE_SESSION_CAP = 5;
 const FREE_DAY_CAP = 10;
-const FREE_RETRY_SECONDS = 5;
 export const OPENAI_GPT_54_MINI_PRICE = "openai-gpt-5.4-mini-standard-2026-10";
 const OPENAI_GPT_54_MINI_MODEL = "gpt-5.4-mini";
 const OPENAI_RESPONSES_URL = "https://api.openai.com/v1/responses";
@@ -42,8 +41,9 @@ const GROQ_CONTEXT_TOKENS = 131_072;
  * gpt-5.4-mini standard rates below 272K context: input $0.75, cached input $0.075, output $4.50.
  * Output tokens include reasoning tokens. This model page does not publish a cache-write rate.
  * Batch and regional-processing prices are not included.
- * Groq on-demand prices below are a commercial comparison only. They do not authorize a call
- * and they are not a Free-plan charge. Retrieved 2026-10-21 from
+ * Groq on-demand prices below are a paid-development schedule only when the
+ * selected model, endpoint, and explicit spending authorization also match.
+ * Free calls retain a commercial comparison, not a Free-plan charge. Verified 2026-10-25 from
  * https://console.groq.com/docs/model/openai/gpt-oss-120b
  * openai/gpt-oss-120b: input $0.15, cached input $0.075, output $0.60 per million tokens.
  * Groq's published rate-limit table is the Developer plan, not the Free plan.
@@ -59,13 +59,15 @@ export const PRICE_SCHEDULES = {
     cachedInputMicrosPerMillion: 75_000,
     outputMicrosPerMillion: 4_500_000,
   },
+  [GROQ_COMMERCIAL_PRICE]: {
+    currency: "USD" as const,
+    inputMicrosPerMillion: 150_000,
+    cachedInputMicrosPerMillion: 75_000,
+    outputMicrosPerMillion: 600_000,
+  },
 } as const;
 
-export const GROQ_COMMERCIAL_SCHEDULE: RateSchedule = {
-  inputMicrosPerMillion: 150_000,
-  cachedInputMicrosPerMillion: 75_000,
-  outputMicrosPerMillion: 600_000,
-};
+export const GROQ_COMMERCIAL_SCHEDULE: RateSchedule = PRICE_SCHEDULES[GROQ_COMMERCIAL_PRICE];
 
 export type PriceVersion = keyof typeof PRICE_SCHEDULES;
 export type RateSchedule = {
@@ -172,7 +174,8 @@ export function paidEditAuthorization(env: ProviderEnv, schedules: Record<string
     && schedule.cachedInputMicrosPerMillion <= schedule.inputMicrosPerMillion
     && schedule.outputMicrosPerMillion >= 0
     && (schedule.inputMicrosPerMillion > 0 || schedule.outputMicrosPerMillion > 0));
-  const officialBinding = priceVersion === OPENAI_GPT_54_MINI_PRICE && (model !== OPENAI_GPT_54_MINI_MODEL || apiUrl !== OPENAI_RESPONSES_URL);
+  const officialBinding = (priceVersion === OPENAI_GPT_54_MINI_PRICE && (model !== OPENAI_GPT_54_MINI_MODEL || apiUrl !== OPENAI_RESPONSES_URL))
+    || (priceVersion === GROQ_COMMERCIAL_PRICE && (model !== GROQ_GPT_OSS_120B_MODEL || apiUrl !== GROQ_RESPONSES_URL));
   if (!MODEL_NAME.test(model) || !PRICE_NAME.test(priceVersion) || priceVersion === FIXTURE_PRICE_VERSION || !ratesArePaid || !schedule || officialBinding || env.ADEENA_AI_SPEND_AUTHORIZED !== "development" || !Number.isFinite(spendCapUsd) || spendCapUsd <= 0 || !Number.isFinite(maxEditUsd) || maxEditUsd <= 0 || maxEditUsd > spendCapUsd || !apiUrl) {
     return { ok: false as const, code: "budget-unavailable" as const };
   }
@@ -281,6 +284,7 @@ export type PaidEditResult = {
   remainingRequests: number | null;
   remainingTokens: number | null;
   diagnostic?: string;
+  attempts?: ProviderAttemptDiagnostic[];
 };
 
 const EDIT_OUTPUT_SCHEMA = {
@@ -333,6 +337,8 @@ export async function requestPaidEdit(input: {
   env: ProviderEnv;
   systemText: string;
   userText: string;
+  jobId?: string;
+  stage?: ProviderAttemptDiagnostic["stage"];
   fetchImpl?: typeof fetch;
   schedules?: Record<string, RateSchedule>;
   timeoutMs?: number;
@@ -367,68 +373,63 @@ export async function requestPaidEdit(input: {
   const key = input.env.ADEENA_AI_API_KEY?.trim() ?? "";
   const fetchImpl = input.fetchImpl ?? fetch;
   const timeoutMs = input.timeoutMs ?? 45_000;
-  const retryDelayMs = input.retryDelayMs ?? 200;
-  const room = input.remainingAfterReserveMicros ?? spend.spendCapMicros - estimated;
-  let callCount = 0;
-  let retryCount = 0;
+  const attempts: ProviderAttemptDiagnostic[] = [];
+  const context = { jobId: input.jobId, stage: input.stage ?? input.structuredGeneration?.kind ?? "edit", provider: providerName(spend.apiUrl), model: spend.model } as const;
+  let attemptStartedAt = 0;
+  const recordAttempt = (reply: Response | undefined, parsed: unknown, usageReporting: "reported" | "missing" | "invalid", successfulEnvelope?: boolean) => {
+    const diagnostic = providerAttempt({ ...context, startedAt: attemptStartedAt, response: reply, parsed, usageReporting, successfulEnvelope });
+    attempts.push(diagnostic);
+    noteProviderAttempt(diagnostic);
+  };
+  const complete = (result: PaidEditResult, reply?: Response, parsed?: unknown) => {
+    const usage = readTokenUsage(parsed);
+    recordAttempt(reply, parsed, usage.inconsistent ? "invalid" : usage.reported ? "reported" : "missing", result.ok);
+    return { ...result, attempts: [...attempts] };
+  };
+  const callCount = 1;
+  const retryCount = 0;
   let response: Response | null = null;
-  let held: { parsed: unknown | null } | null = null;
-  for (let attempt = 0; attempt < 2; attempt += 1) {
-    callCount += 1;
-    try {
-      response = await fetchImpl(spend.apiUrl, {
-        method: "POST",
-        redirect: "error",
-        signal: AbortSignal.timeout(timeoutMs),
-        headers: { "content-type": "application/json", authorization: `Bearer ${key}` },
-        body: JSON.stringify(requestBody),
-      });
-    } catch {
-      return charged("provider-unavailable", spend, estimated, callCount, retryCount, blankUsage(), "estimate", 0, false);
-    }
-    if (response.status === 429 && attempt === 0) {
-      held = await readResponseBody(response);
-      if (billingRefusal(held.parsed)) break;
-      const usage = readTokenUsage(held.parsed);
-      if (usage.reported) break;
-      held = null;
-      const allowed = room >= estimated && (input.confirmRetry ? await input.confirmRetry() : true);
-      if (!allowed) return charged("provider-unavailable", spend, estimated, callCount, retryCount, blankUsage(), "none", 0, true);
-      retryCount += 1;
-      await delay(retryDelayMs);
-      continue;
-    }
-    held = null;
-    break;
+  attemptStartedAt = Date.now();
+  try {
+    response = await fetchImpl(spend.apiUrl, {
+      method: "POST",
+      redirect: "error",
+      signal: AbortSignal.timeout(timeoutMs),
+      headers: { "content-type": "application/json", authorization: `Bearer ${key}` },
+      body: JSON.stringify(requestBody),
+    });
+  } catch {
+    return complete(charged("provider-unavailable", spend, estimated, callCount, retryCount, blankUsage(), "estimate", 0, false));
   }
-  if (!response) return charged("provider-unavailable", spend, estimated, callCount, retryCount, blankUsage(), "estimate", 0, false);
-  const body = held ?? await readResponseBody(response);
+  if (!response) return complete(charged("provider-unavailable", spend, estimated, callCount, retryCount, blankUsage(), "estimate", 0, false));
+  const body = await readResponseBody(response);
   const usage = readTokenUsage(body.parsed);
   const responseId = readResponseId(body.parsed);
   if (!response.ok) {
-    noteProviderFault(response.status, body.parsed, key, input.userText);
-    if (usage.reported) return finish(spend, estimated, callCount, retryCount, usage, responseId, "provider-unavailable", null);
+    if (usage.reported) return complete(finish(spend, estimated, callCount, retryCount, usage, responseId, "provider-unavailable", null), response, body.parsed);
     const authRejected = response.status === 401 || response.status === 403;
     const billingRejected = response.status === 429 && billingRefusal(body.parsed);
-    const unbilled = authRejected || billingRejected || response.status === 400 || response.status === 429;
+    const unbilled = (authRejected || billingRejected) && confirmedNonbillableRejection(response.status, body.parsed);
     const code = authRejected ? "generation-unavailable" : billingRejected ? "budget-unavailable" : "provider-unavailable";
-    return charged(code, spend, estimated, callCount, retryCount, blankUsage(), unbilled ? "none" : "estimate", 0, unbilled, responseId);
+    return complete(charged(code, spend, estimated, callCount, retryCount, blankUsage(), unbilled ? "none" : "estimate", 0, unbilled, responseId), response, body.parsed);
   }
-  if (!body.parsed) return charged("invalid-experience", spend, estimated, callCount, retryCount, blankUsage(), "estimate", 0, false, responseId);
-  if (input.structuredGeneration && (usage.inputTokens > tokenLimits.input || usage.outputTokens > tokenLimits.output)) return finish(spend, estimated, callCount, retryCount, usage, responseId, "budget-unavailable", null);
+  if (!body.parsed) return complete(charged("invalid-experience", spend, estimated, callCount, retryCount, blankUsage(), "estimate", 0, false, responseId), response, body.parsed);
+  if (input.structuredGeneration && (usage.inputTokens > tokenLimits.input || usage.outputTokens > tokenLimits.output)) return complete(finish(spend, estimated, callCount, retryCount, usage, responseId, "budget-unavailable", null), response, body.parsed);
   const content = readModelContent(body.parsed);
   if (input.structuredGeneration) {
     const normalized = normalizeGroqStrictOutput(content, input.structuredGeneration.schema);
-    if (!normalized.ok) return { ...finish(spend, estimated, callCount, retryCount, usage, responseId, "invalid-experience", null), diagnostic: `schema.normalization: ${normalized.diagnostic}` };
-    return finish(spend, estimated, callCount, retryCount, usage, responseId, null, normalized.value);
+    if (!normalized.ok) return complete({ ...finish(spend, estimated, callCount, retryCount, usage, responseId, "invalid-experience", null), diagnostic: `schema.normalization: ${normalized.diagnostic}` }, response, body.parsed);
+    return complete(finish(spend, estimated, callCount, retryCount, usage, responseId, null, normalized.value), response, body.parsed);
   }
-  return finish(spend, estimated, callCount, retryCount, usage, responseId, null, content);
+  return complete(finish(spend, estimated, callCount, retryCount, usage, responseId, null, content), response, body.parsed);
 }
 
 async function requestFreeEdit(input: {
   env: ProviderEnv;
   systemText: string;
   userText: string;
+  jobId?: string;
+  stage?: ProviderAttemptDiagnostic["stage"];
   fetchImpl?: typeof fetch;
   timeoutMs?: number;
   retryDelayMs?: number;
@@ -460,84 +461,78 @@ async function requestFreeEdit(input: {
   const timeoutMs = input.timeoutMs ?? 45_000;
   const spend = commercialSpend(auth.model, auth.priceVersion, auth.apiUrl);
   const started = Date.now();
-  let callCount = 0;
-  let retryCount = 0;
+  const attempts: ProviderAttemptDiagnostic[] = [];
+  let attemptStartedAt = 0;
+  const context = { jobId: input.jobId, stage: input.stage ?? input.structuredGeneration?.kind ?? "edit", provider: "groq", model: auth.model } as const;
+  const recordAttempt = (reply: Response | undefined, parsed: unknown, usageReporting: "reported" | "missing" | "invalid", successfulEnvelope?: boolean) => {
+    const diagnostic = providerAttempt({ ...context, startedAt: attemptStartedAt, response: reply, parsed, usageReporting, successfulEnvelope });
+    attempts.push(diagnostic);
+    noteProviderAttempt(diagnostic);
+  };
+  const complete = (result: PaidEditResult, reply?: Response, parsed?: unknown) => {
+    const usage = readTokenUsage(parsed);
+    recordAttempt(reply, parsed, usage.inconsistent ? "invalid" : usage.reported ? "reported" : "missing", result.ok);
+    return { ...result, attempts: [...attempts] };
+  };
+  const callCount = 1;
+  const retryCount = 0;
   let response: Response | null = null;
-  let held: { parsed: unknown | null } | null = null;
   let limits = { remainingRequests: null as number | null, remainingTokens: null as number | null };
-  for (let attempt = 0; attempt < 2; attempt += 1) {
-    callCount += 1;
-    try {
-      response = await fetchImpl(auth.apiUrl, {
-        method: "POST",
-        redirect: "error",
-        signal: AbortSignal.timeout(timeoutMs),
-        headers: { "content-type": "application/json", authorization: `Bearer ${key}` },
-        body: JSON.stringify(requestBody),
-      });
-    } catch {
-      return asFree(charged("provider-unavailable", spend, ceiling, callCount, retryCount, blankUsage(), "none", 0, false), limits, started, ceiling);
-    }
-    limits = rateLimitSnapshot(response);
-    if (response.status === 429 && attempt === 0) {
-      held = await readResponseBody(response);
-      const retryAfterSeconds = retryAfterSecondsOf(response);
-      const transient = retryAfterSeconds !== null && retryAfterSeconds <= FREE_RETRY_SECONDS && limits.remainingRequests !== null && limits.remainingRequests > 0;
-      if (!transient || billingRefusal(held.parsed) || readTokenUsage(held.parsed).reported) break;
-      const allowed = input.confirmRetry ? await input.confirmRetry() : false;
-      if (!allowed) break;
-      retryCount += 1;
-      held = null;
-      await delay(input.retryDelayMs ?? retryAfterSeconds * 1_000);
-      continue;
-    }
-    held = null;
-    break;
+  attemptStartedAt = Date.now();
+  try {
+    response = await fetchImpl(auth.apiUrl, {
+      method: "POST",
+      redirect: "error",
+      signal: AbortSignal.timeout(timeoutMs),
+      headers: { "content-type": "application/json", authorization: `Bearer ${key}` },
+      body: JSON.stringify(requestBody),
+    });
+  } catch {
+    return complete(asFree(charged("provider-unavailable", spend, ceiling, callCount, retryCount, blankUsage(), "estimate", 0, false), limits, started, ceiling));
   }
-  if (!response) return asFree(charged("provider-unavailable", spend, ceiling, callCount, retryCount, blankUsage(), "none", 0, false), limits, started, ceiling);
-  const body = held ?? await readResponseBody(response);
-  if (response.ok) noteProviderResult(response.status, readResponseId(body.parsed));
+  limits = rateLimitSnapshot(response);
+  if (!response) return complete(asFree(charged("provider-unavailable", spend, ceiling, callCount, retryCount, blankUsage(), "estimate", 0, false), limits, started, ceiling));
+  const body = await readResponseBody(response);
   const usage = readTokenUsage(body.parsed);
   const responseId = readResponseId(body.parsed);
   if (!response.ok) {
-    noteProviderFault(response.status, body.parsed, key, input.userText);
     if (usage.reported) {
-      return asFree(finish(spend, ceiling, callCount, retryCount, usage, responseId, "provider-unavailable", null), limits, started, ceiling);
+      return complete(asFree(finish(spend, ceiling, callCount, retryCount, usage, responseId, "provider-unavailable", null), limits, started, ceiling), response, body.parsed);
     }
     const authRejected = response.status === 401 || response.status === 403;
     const dailyExhausted = response.status === 429 && (limits.remainingRequests === 0 || billingRefusal(body.parsed));
     const code = authRejected ? "generation-unavailable" : dailyExhausted ? "budget-unavailable" : "provider-unavailable";
-    return asFree(charged(code, spend, ceiling, callCount, retryCount, blankUsage(), "none", 0, false, responseId), limits, started, ceiling);
+    return complete(asFree(charged(code, spend, ceiling, callCount, retryCount, blankUsage(), confirmedNonbillableRejection(response.status, body.parsed) ? "none" : "estimate", 0, false, responseId), limits, started, ceiling), response, body.parsed);
   }
   if (!body.parsed || !usage.reported || usage.inconsistent) {
     const unfinished = body.parsed
       ? finish(spend, ceiling, callCount, retryCount, usage, responseId, null, null)
       : charged("invalid-experience", spend, ceiling, callCount, retryCount, blankUsage(), "estimate", 0, false, responseId);
-    return asFree(unfinished, limits, started, ceiling);
+    return complete(asFree(unfinished, limits, started, ceiling), response, body.parsed);
   }
   const extracted = readGroqAssistantPayload(body.parsed);
   if (!extracted.ok) {
     const status = extracted.status === "refusal" || extracted.status === "incomplete" || extracted.status === "failed" ? extracted.status : "invalid";
-    return { ...asFree(finish(spend, ceiling, callCount, retryCount, usage, responseId, null, { status }), limits, started, ceiling), diagnostic: extracted.diagnostic };
+    return complete({ ...asFree(finish(spend, ceiling, callCount, retryCount, usage, responseId, null, { status }), limits, started, ceiling), diagnostic: extracted.diagnostic }, response, body.parsed);
   }
   if (input.structuredGeneration) {
     const normalized = normalizeGroqStrictOutput(extracted.payload, input.structuredGeneration.schema);
     const result = asFree(finish(spend, ceiling, callCount, retryCount, usage, responseId, normalized.ok ? null : "invalid-experience", normalized.ok ? normalized.value : null), limits, started, ceiling);
-    if (!normalized.ok) return { ...result, diagnostic: `schema.normalization: ${normalized.diagnostic}` };
-    if (result.inputTokens > tokenLimits.input || result.outputTokens > tokenLimits.output) return { ...result, ok: false, code: "budget-unavailable", content: undefined };
-    return result;
+    if (!normalized.ok) return complete({ ...result, diagnostic: `schema.normalization: ${normalized.diagnostic}` }, response, body.parsed);
+    if (result.inputTokens > tokenLimits.input || result.outputTokens > tokenLimits.output) return complete({ ...result, ok: false, code: "budget-unavailable", content: undefined }, response, body.parsed);
+    return complete(result, response, body.parsed);
   }
   const mapped = input.editMode === "graph" ? mapGroqGraphTransport(extracted.payload) : mapGroqTransport(extracted.payload, input.dialogueTarget);
   if (!mapped.ok) {
     const rejected = asFree(finish(spend, ceiling, callCount, retryCount, usage, responseId, null, { status: "invalid" }), limits, started, ceiling);
-    return { ...rejected, ok: false, code: mapped.code, content: undefined, diagnostic: mapped.diagnostic };
+    return complete({ ...rejected, ok: false, code: mapped.code, content: undefined, diagnostic: mapped.diagnostic }, response, body.parsed);
   }
   const finished = finish(spend, ceiling, callCount, retryCount, usage, responseId, null, mapped.edit);
   const free = asFree(finished, limits, started, ceiling);
   if (free.ok && (free.inputTokens > MAX_INPUT_TOKENS || free.outputTokens > MAX_OUTPUT_TOKENS)) {
-    return { ...free, ok: false, code: "budget-unavailable", content: undefined };
+    return complete({ ...free, ok: false, code: "budget-unavailable", content: undefined }, response, body.parsed);
   }
-  return free;
+  return complete(free, response, body.parsed);
 }
 
 function commercialSpend(model: string, priceVersion: string, apiUrl: string): EditSpend {
@@ -573,13 +568,6 @@ function rateLimitSnapshot(response: Response) {
     remainingRequests: headerInt(response, "x-ratelimit-remaining-requests"),
     remainingTokens: headerInt(response, "x-ratelimit-remaining-tokens"),
   };
-}
-
-function retryAfterSecondsOf(response: Response) {
-  const raw = response.headers.get("retry-after")?.trim() ?? "";
-  if (!/^[0-9]+$/.test(raw)) return null;
-  const seconds = Number(raw);
-  return seconds <= 86_400 ? seconds : null;
 }
 
 function headerInt(response: Response, name: string) {
@@ -699,8 +687,8 @@ function whole(value: unknown) {
 }
 
 function readResponseId(value: unknown) {
-  if (!value || typeof value !== "object" || !("id" in value) || typeof value.id !== "string" || !RESPONSE_ID.test(value.id)) return null;
-  return value.id;
+  if (!value || typeof value !== "object" || !("id" in value)) return null;
+  return safeProviderRequestId(value.id);
 }
 
 function readModelContent(value: unknown) {
@@ -735,33 +723,32 @@ function readOutcome(content: unknown) {
 }
 
 function billingRefusal(parsed: unknown) {
-  const error = parsed && typeof parsed === "object" && "error" in parsed && parsed.error && typeof parsed.error === "object" ? parsed.error : null;
-  const code = error && "code" in error && typeof error.code === "string" ? error.code : "";
+  const code = safeProviderErrorCode(parsed);
   return code === "credit_balance_exhausted" || code === "insufficient_quota" || code === "billing_hard_limit_reached";
+}
+
+function confirmedNonbillableRejection(status: number, parsed: unknown) {
+  const code = safeProviderErrorCode(parsed);
+  return ((status === 401 || status === 403) && (code === "invalid_api_key" || code === "invalid_authentication"))
+    || (status === 429 && billingRefusal(parsed));
+}
+
+function providerName(apiUrl: string): ProviderAttemptDiagnostic["provider"] {
+  return apiUrl === GROQ_RESPONSES_URL ? "groq" : apiUrl === OPENAI_RESPONSES_URL ? "openai" : "configured-provider";
 }
 
 export function logEditDiagnostic(code: string) {
   const file = process.env.ADEENA_AI_FAULT_LOG;
-  if (!file || !file.startsWith(tmpdir()) || !/^[a-z0-9._:()|-]{1,120}$/i.test(code)) return;
-  appendFileSync(file, `validation ${code}\n`);
+  if (!file || !file.startsWith(tmpdir()) || !code) return;
+  // Validation details may include provider-controlled field names or source text.
+  appendFileSync(file, "validation rejected\n");
 }
 
-function noteProviderResult(status: number, responseId: string | null) {
+function noteProviderAttempt(diagnostic: ProviderAttemptDiagnostic) {
   const file = process.env.ADEENA_AI_FAULT_LOG;
   if (!file || !file.startsWith(tmpdir())) return;
-  appendFileSync(file, `${status} completed ${responseId ?? "none"}\n`);
-}
-
-function noteProviderFault(status: number, parsed: unknown, secret: string, userText: string) {
-  const file = process.env.ADEENA_AI_FAULT_LOG;
-  if (!file || !file.startsWith(tmpdir())) return;
-  const error = parsed && typeof parsed === "object" && "error" in parsed && parsed.error && typeof parsed.error === "object" ? parsed.error : null;
-  const code = error && "code" in error && typeof error.code === "string" ? error.code : "";
-  const text = error && "message" in error && typeof error.message === "string" ? error.message : "";
-  let message = `${code} ${text}`.replace(/\s+/g, " ").slice(0, 240);
-  if (secret && message.includes(secret)) return;
-  if (userText) message = message.split(userText).join("[redacted]");
-  appendFileSync(file, `${status} ${message}\n`);
+  try { appendFileSync(file, `${JSON.stringify(diagnostic)}\n`); }
+  catch { /* Optional local logging must never change a provider outcome. */ }
 }
 
 async function readResponseBody(response: Response) {
@@ -777,9 +764,4 @@ async function readResponseBody(response: Response) {
   } catch {
     return { parsed: null };
   }
-}
-
-function delay(ms: number) {
-  if (ms <= 0) return Promise.resolve();
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }

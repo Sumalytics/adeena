@@ -88,4 +88,55 @@ describe("durable model generation", () => {
     const [unused] = await admin`select session_requests,day_requests from adeena_free_quota`;
     expect(unused).toMatchObject({ session_requests: 1, day_requests: 1 });
   });
+
+  it("keeps a paid unknown charge reserved with a safe durable diagnostic and never reactivates the failed job", async () => {
+    const identity = issueIdentityForIsolatedTests(randomUUID());
+    const workspaceId = randomUUID();
+    await createWorkspace(sql, identity, { id: workspaceId, name: "Diagnostic test", workspaceType: "personal" });
+    const actor = { sql, identity, workspaceId };
+    const { source } = specimen();
+    const store = createFilesystemObjectStore(root);
+    const uploaded = await enqueueDurableSource({ ...actor, filename: "garden-diagnostic.md", bytes: Buffer.from(`# Rain garden\n\n${source.spans[0].excerpt} ${source.spans[0].excerpt} ${source.spans[0].excerpt}`), store, idempotencyKey: randomUUID() });
+    await runExtractionOnce({ ...actor, store, leaseOwner: "diagnostic-test" });
+    const documentVersionId = uploaded.version.id;
+    const recommended = await recommendFirstTopic({ ...actor, documentVersionId, audienceLabel: "Primary learners", ageBand: "8-10", idempotencyKey: randomUUID() });
+    const topicCandidateId = recommended.recommendation!.topicCandidateId!;
+    const paidEnv = {
+      ADEENA_EXPERIENCE_PROVIDER: "configured-provider", ADEENA_AI_EXECUTION_MODE: "paid-development",
+      ADEENA_AI_API_KEY: "private-test-key", ADEENA_AI_MODEL: "openai/gpt-oss-120b",
+      ADEENA_AI_PRICE_VERSION: "groq-gpt-oss-120b-ondemand-2026-10", ADEENA_AI_API_URL: "https://api.groq.com/openai/v1/responses",
+      ADEENA_AI_SPEND_CAP_USD: "1", ADEENA_AI_MAX_EDIT_COST_USD: "0.02", ADEENA_AI_SPEND_AUTHORIZED: "development",
+    };
+    let requests = 0;
+    const idempotencyKey = randomUUID();
+    const input = { ...actor, documentVersionId, topicCandidateId, audienceLabel: "Primary learners", ageBand: "8-10" as const,
+      idempotencyKey, authorizeGeneration: true as const, provider: "configured-provider" as const, env: paidEnv,
+      fetchImpl: (async () => { requests++; return Response.json({ error: { code: "invalid_request_error", message: `Echo ${source.spans[0].excerpt} private-test-key` } }, { status: 400, headers: { "x-request-id": "req_1234567890abcdef" } }); }) as typeof fetch,
+    };
+    await expect(createPlayableExperience(input)).rejects.toMatchObject({ code: "provider-unavailable" });
+    await expect(createPlayableExperience(input)).rejects.toMatchObject({ code: "provider-unavailable" });
+    expect(requests).toBe(1);
+    const [job] = await admin`select id::text,status,permanent,attempt_count from experience_generation_jobs where idempotency_key=${idempotencyKey}::uuid`;
+    expect(job).toMatchObject({ status: "failed", permanent: true, attempt_count: 1 });
+    const [cost] = await admin`select actual_cost_micros,estimated_cost_micros,usage_kind,call_count,retry_count,model_calls from experience_generation_costs where job_id=${job.id}::uuid`;
+    expect(cost).toMatchObject({ actual_cost_micros: null, estimated_cost_micros: 3300, usage_kind: "estimate", call_count: 1, retry_count: 0 });
+    expect(cost.model_calls[0].attempts[0]).toMatchObject({ jobId: job.id, stage: "plan", httpStatus: 400, category: "provider-request-invalid", billingCertainty: "unknown-external-charge" });
+    expect(JSON.stringify(cost.model_calls)).not.toContain(source.spans[0].excerpt);
+    expect(JSON.stringify(cost.model_calls)).not.toContain("private-test-key");
+    const [spend] = await admin`select reserved_micros from adeena_edit_spend where id='development'`;
+    expect(spend.reserved_micros).toBe(3300);
+
+    const rejectedKey = randomUUID();
+    let rejectedRequests = 0;
+    await expect(createPlayableExperience({ ...input, idempotencyKey: rejectedKey, fetchImpl: (async () => {
+      rejectedRequests++;
+      return Response.json({ error: { code: "invalid_api_key", message: "Rejected before generation" } }, { status: 401 });
+    }) as typeof fetch })).rejects.toMatchObject({ code: "generation-unavailable" });
+    expect(rejectedRequests).toBe(1);
+    const [rejected] = await admin`select c.actual_cost_micros,c.estimated_cost_micros,c.usage_kind,c.model_calls from experience_generation_costs c join experience_generation_jobs j on j.id=c.job_id where j.idempotency_key=${rejectedKey}::uuid`;
+    expect(rejected).toMatchObject({ actual_cost_micros: 0, estimated_cost_micros: 0, usage_kind: "none" });
+    expect(rejected.model_calls[0].attempts[0]).toMatchObject({ httpStatus: 401, category: "provider-auth-failure", billingCertainty: "confirmed-nonbillable" });
+    const [afterRejection] = await admin`select reserved_micros from adeena_edit_spend where id='development'`;
+    expect(afterRejection.reserved_micros).toBe(3300);
+  });
 });
