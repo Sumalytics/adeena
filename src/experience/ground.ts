@@ -16,8 +16,8 @@ export function groundFacts(
       });
       continue;
     }
-    const excerpt = collapsed(span.excerpt).toLowerCase();
-    const claim = collapsed(fact.claim).toLowerCase();
+    const excerpt = collapsed(span.excerpt);
+    const claim = fact.claim;
     if (!excerpt.includes(claim)) {
       diagnostics.push({
         code: "grounding.unsupported-claim",

@@ -85,6 +85,8 @@ export async function generateModelPlan(input: Input): Promise<Compilation> {
   return outcome;
 }
 function providerFailure(result: PaidEditResult): Compilation {
+  if (result.diagnostic === "plan.instructional-insufficiency")
+    return rejected("plan.instructional-insufficiency", "The source cannot support two meaningful decisions without inventing consequences.");
   const code = result.code === "unsupported-edit" ? "invalid-experience" : result.code ?? "provider-unavailable";
   return { ...rejected(code, "The configured model did not return an acceptable plan."), code };
 }

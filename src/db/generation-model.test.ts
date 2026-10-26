@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { specimen } from "@/experience/model-plan.examples";
+import { groqAuthoredPlanFixture } from "@/experience/model-plan.test-transport";
 import { createFilesystemObjectStore } from "@/storage/filesystem";
 import { openDatabase, type DatabaseClient } from "./client";
 import { databaseUrl, applicationDatabaseUrl } from "./env";
@@ -54,10 +55,10 @@ describe("durable model generation", () => {
       requests++;
       const body = JSON.parse(String(init?.body));
       const context = JSON.parse(body.input);
-      const { facts, ...planFields } = plan;
+      const authored = groqAuthoredPlanFixture(plan, context.excerpts[0].id);
       const result = body.text.format.name === "experience_plan" ? {
-        ...planFields, fact1: { ...facts[0], spanId: context.excerpts[0].id },
-        fact2: { ...facts[1], spanId: context.excerpts[0].id }, fact3: null, fact4: null,
+        ...authored, fact1: { ...authored.fact1, spanId: context.excerpts[0].id },
+        fact2: { ...authored.fact2, spanId: context.excerpts[0].id },
       } : { grounded: !rejectReview, coherent: true, consequential: true, audienceSuitable: true, issues: [] };
       return Response.json({ id: `resp_${requests}`, status: "completed", output: [{ type: "message", content: [{ type: "output_text", text: JSON.stringify(result) }] }], usage: { input_tokens: 1000, output_tokens: 800, output_tokens_details: { reasoning_tokens: 10 } } });
     };

@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { groqAuthoredPlanFixture } from "@/experience/model-plan.test-transport";
 import { spawn } from "node:child_process";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -111,22 +112,22 @@ describe("durable visual AI generation", () => {
       if (body.text.format.name === "experience_plan") {
         const [first, second] = context.allowedFacts;
         const choice = (id: string, text: string, nextSceneId: string, understanding: number) => ({ id, text, nextSceneId, understanding });
-        content = {
+        const authoredPlan = {
           learnerObjective: "Apply the two source-supported preparation steps.",
           setting: { kind: "fictional", label: "A fictional coffee workshop" },
-          fact1: { kind: "source", claim: first.claim, spanId: first.spanId },
-          fact2: { kind: "source", claim: second.claim, spanId: second.spanId }, fact3: null, fact4: null,
+          facts: [{ kind: "source", claim: first.claim, spanId: first.spanId }, { kind: "source", claim: second.claim, spanId: second.spanId }],
           fictionalElements: ["coffee workshop"], gameplayObjective: "Choose two actions using the source sequence.",
           progression: [
             { id: "start", role: "dialogue", title: "Coffee workshop", text: `This is a fictional scenario. ${first.claim} ${second.claim}`, choices: [choice("use-first", "Begin with the first source stage", "follow-first", 1), choice("use-second", "Begin with the second source stage", "follow-second", 0)] },
             { id: "follow-first", role: "dialogue", title: "Next stage", text: `${second.claim} Choose the next source stage.`, choices: [choice("continue-order", "Continue in source order", "end-ordered", 2), choice("reverse-order", "Reverse the two source stages", "end-reversed", 0)] },
-            { id: "follow-second", role: "dialogue", title: "Next stage", text: `${second.claim} Choose the next source stage.`, choices: [choice("return-first", "Return to the first source stage", "end-returned", 1), choice("stay-second", "Stay with the second source stage", "end-skipped", 0)] },
+            { id: "follow-second", role: "dialogue", title: "Next stage", text: `You began with the second stage. ${second.claim} Choose the next source stage.`, choices: [choice("return-first", "Return to the first source stage", "end-returned", 1), choice("stay-second", "Stay with the second source stage", "end-skipped", 0)] },
             { id: "end-ordered", role: "ending", title: "Source order", text: "You chose the first stage and then continued in source order." },
             { id: "end-reversed", role: "ending", title: "Reversed", text: "You chose the first stage and then reversed the two stages." },
             { id: "end-returned", role: "ending", title: "Returned", text: "You chose the second stage and then returned to the first." },
             { id: "end-skipped", role: "ending", title: "Skipped", text: "You chose the second stage and stayed there." },
           ],
         };
+        content = groqAuthoredPlanFixture(authoredPlan, first.spanId);
       } else if (body.text.format.name === "experience_review") {
         content = { grounded: true, coherent: true, consequential: true, audienceSuitable: true, issues: [] };
       } else if (body.text.format.name === "experience_visualPlan") {
@@ -195,6 +196,11 @@ describe("durable visual AI generation", () => {
     expect(calls).toBe(2);
     const visual = await readVisualExperience({ ...actor, experienceVersionId: versionId });
     expect(visual).toMatchObject({ status: "ready", association: { authoredFixture: false, fixtureLabel: null } });
+    if (visual?.status !== "ready") throw new Error("The mock visual preview is unavailable");
+    expect(visual.association.blueprint.scenes.some(scene => scene.cues.length > 0
+      && scene.narration.some(segment => segment.caption.length > 0))).toBe(true);
+    expect(visual.association.blueprint.scenes.some(scene => scene.interaction?.kind === "sequence-steps"
+      && scene.interaction.feedback.correct.length > 0 && scene.interaction.feedback.incorrect.length > 0)).toBe(true);
     const [cost] = await admin`select call_count,input_tokens,output_tokens,actual_cost_micros,commercial_estimate_micros from visual_generation_costs`;
     expect(cost).toMatchObject({ call_count: 2, input_tokens: 1800, output_tokens: 1400, actual_cost_micros: 0 });
     expect(cost.commercial_estimate_micros).toBeGreaterThan(0);

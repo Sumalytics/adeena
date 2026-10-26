@@ -12,7 +12,7 @@ export function specimen(example = examples[0]) {
   const choice = (id: string, text: string, nextSceneId: string, understanding: number) => ({ id, text, nextSceneId, understanding });
   const plan = { learnerObjective: `Apply the two rules about ${example.title}.`, setting: { kind: "fictional", label: `The ${example.title} workshop` }, facts: example.facts.map(claim => ({ kind: "source", claim, spanId })), fictionalElements: ["The workshop"], gameplayObjective: "Complete both tasks using the source rules.", progression: [
     { id: "start", role: "dialogue", title: example.title, text: `This workshop is fictional. ${example.facts.join(" ")}`, choices: [choice("first", example.choices[0], "follow-a", 1), choice("second", example.choices[1], "follow-b", 0)] },
-    ...["a", "b"].map((branch, index) => ({ id: `follow-${branch}`, role: "dialogue", title: "The second task", text: `${example.facts[1]} Choose your next action.`, choices: [choice("third", example.choices[2], `end-${index * 2}`, index === 0 ? 2 : 1), choice("fourth", example.choices[3], `end-${index * 2 + 1}`, index === 0 ? 1 : 0)] })),
+    ...["a", "b"].map((branch, index) => ({ id: `follow-${branch}`, role: "dialogue", title: "The second task", text: `${example.facts[1]} This follows opening choice ${branch.toUpperCase()}. Choose your next action.`, choices: [choice("third", example.choices[2], `end-${index * 2}`, index === 0 ? 2 : 1), choice("fourth", example.choices[3], `end-${index * 2 + 1}`, index === 0 ? 1 : 0)] })),
     ...example.outcomes.map((text, index) => ({ id: `end-${index}`, role: "ending", title: "Your result", text })),
   ] };
   return { source, plan };

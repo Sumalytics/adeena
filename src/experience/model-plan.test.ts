@@ -1,7 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
-import { allowedFacts, groqModelPlanSchema, modelPlanSchema, normalizeGroqModelPlan, parseSourcePlan, reviewPasses, reviewRejection, requestPlanStage } from "./model-plan";
+import { allowedFacts, groqModelPlanSchema, modelPlanSchema, normalizeAuthoredModelPlan, normalizeGroqModelPlan, parseSourcePlan, reviewPasses, reviewRejection, requestPlanStage } from "./model-plan";
 import { examples, specimen } from "./model-plan.examples";
+import { authoredPlanFixture, groqAuthoredPlanFixture } from "./model-plan.test-transport";
 import preservedPlan from "./fixtures/mvp02-base-plan.json";
 import { groqStrictTransportSchema } from "./strict-transport";
 
@@ -14,6 +15,25 @@ describe("source-specific model plans", () => {
     expect(result.simulation.endingSceneIds).toHaveLength(4);
     expect(result.manifest.runtime.requiresLlm).toBe(false);
     expect(result.plan.promptVersion).toBe("source-plan@1");
+  });
+  it("accepts natural scene paraphrases while keeping source evidence exact", () => {
+    const { source, plan } = specimen();
+    plan.progression[0].text = "This workshop is fictional. A shallow planted hollow collects runoff. An overflow channel carries extra water away from the path.";
+    plan.progression[1].text = "The channel carries extra water away from the path. Choose your next action.";
+    plan.progression[2].text = plan.progression[1].text;
+    expect(plan.facts.every(fact => !plan.progression.some(scene => scene.text.includes(fact.claim)))).toBe(true);
+    const compiled = parseSourcePlan(plan, source);
+    expect(compiled.ok, JSON.stringify(compiled)).toBe(true);
+    if (!compiled.ok) return;
+    expect(compiled.simulation.endingSceneIds).toHaveLength(4);
+    expect(compiled.manifest.runtime.requiresLlm).toBe(false);
+
+    const changedCase = structuredClone(plan);
+    changedCase.facts[0].claim = changedCase.facts[0].claim.toLowerCase();
+    expect(parseSourcePlan(changedCase, source)).toMatchObject({ ok: false, diagnostics: [{ code: "grounding.unsupported-claim" }] });
+    const changedSpan = structuredClone(plan);
+    changedSpan.facts[0].spanId = randomUUID();
+    expect(parseSourcePlan(changedSpan, source)).toMatchObject({ ok: false, diagnostics: [{ code: "grounding.missing-span" }] });
   });
   it("rejects invented claims, foreign references, cycles, early endings and duplicate outcomes", () => {
     const { source, plan } = specimen();
@@ -74,29 +94,39 @@ describe("source-specific model plans", () => {
     expect(schema.additionalProperties).toBe(false);
     expect(Object.keys(properties).filter(key => /^fact[1-4]$/.test(key))).toEqual(["fact1", "fact2", "fact3", "fact4"]);
     expect(properties).not.toHaveProperty("facts");
-    for (const key of ["fact1", "fact2"]) expect(properties[key]).toMatchObject({ type: "object", additionalProperties: false });
-    for (const key of ["fact3", "fact4"]) expect(properties[key]).toMatchObject({ anyOf: [{ type: "object", additionalProperties: false }, { type: "null" }] });
+    expect(schema.$defs).toHaveProperty("sourceFact");
+    for (const key of ["fact1", "fact2"]) expect(properties[key]).toMatchObject({ $ref: "#/$defs/sourceFact" });
+    for (const key of ["fact3", "fact4"]) expect(properties[key]).toMatchObject({ anyOf: [{ $ref: "#/$defs/sourceFact" }, { type: "null" }] });
+    expect(properties).toHaveProperty("scenes");
+    expect(JSON.stringify(properties.scenes)).not.toContain("nextSceneId");
+    expect(JSON.stringify(properties.scenes)).not.toContain('"id"');
   });
   it("normalizes two, three or four source-exact facts without dropping any content", () => {
     const { source, plan } = specimen();
     source.spans[0].excerpt += " A blue card signals the curtain to open. A yellow card signals the music to start.";
     const candidates = allowedFacts(source);
     expect(candidates).toHaveLength(4);
-    const { facts, ...rest } = plan;
-    expect(facts).toHaveLength(2);
+    const base = groqAuthoredPlanFixture(plan);
     const sourceFacts = candidates.map(fact => ({ kind: "source" as const, ...fact }));
     for (const count of [2, 3, 4]) {
-      const slots = { ...rest, fact1: sourceFacts[0], fact2: sourceFacts[1], fact3: sourceFacts[2] && count >= 3 ? sourceFacts[2] : null, fact4: sourceFacts[3] && count >= 4 ? sourceFacts[3] : null };
+      const slots = { ...base, fact1: sourceFacts[0], fact2: sourceFacts[1], fact3: sourceFacts[2] && count >= 3 ? sourceFacts[2] : null, fact4: sourceFacts[3] && count >= 4 ? sourceFacts[3] : null };
       const normalized = normalizeGroqModelPlan(slots, source);
       expect(normalized).toMatchObject({ ok: true, value: { facts: sourceFacts.slice(0, count) } });
-      if (count === 2 && normalized.ok) expect(parseSourcePlan(normalized.value, source).ok).toBe(true);
+      if (normalized.ok) {
+        const compiled = parseSourcePlan(normalized.value, source);
+        expect(compiled.ok, JSON.stringify(compiled)).toBe(true);
+        if (compiled.ok) {
+          expect(compiled.plan.progression).toHaveLength(7);
+          expect(compiled.simulation.endingSceneIds).toHaveLength(4);
+          expect(compiled.simulation.longestChoicePath).toBe(2);
+        }
+      }
     }
   });
   it("rejects gaps, duplicates, foreign or mismatched source pairs, malformed slots and extra fields", () => {
     const { source, plan } = specimen();
-    const { facts, ...rest } = plan;
-    const [fact1, fact2] = facts;
-    const slots = { ...rest, fact1, fact2, fact3: null, fact4: null };
+    const slots = groqAuthoredPlanFixture(plan);
+    const { fact1, fact2 } = slots;
     const fail = (input: unknown, diagnostic: string) => expect(normalizeGroqModelPlan(input, source)).toEqual({ ok: false, diagnostic });
     fail({ ...slots, fact3: null, fact4: fact2 }, "plan.fact-slots.gap");
     fail({ ...slots, fact3: fact1 }, "plan.fact-slots.duplicate");
@@ -107,6 +137,54 @@ describe("source-specific model plans", () => {
     fail({ ...slots, fact4: undefined }, "plan.fact-slots.invalid");
     fail({ ...slots, facts: [fact1, fact2] }, "plan.fact-slots.invalid");
     fail({ ...slots, fact1: { ...fact1, extra: true } }, "plan.fact-slots.invalid");
+  });
+  it("lets the server wire exactly four two-decision routes from seven closed slots", () => {
+    const { source, plan } = specimen();
+    const authored = groqAuthoredPlanFixture(plan);
+    expect(Object.keys(authored.scenes)).toEqual(["opening", "afterA", "afterB", "endingAA", "endingAB", "endingBA", "endingBB"]);
+    expect(JSON.stringify(authored.scenes)).not.toContain("nextSceneId");
+    const normalized = normalizeGroqModelPlan(authored, source);
+    expect(normalized.ok).toBe(true);
+    if (!normalized.ok) return;
+    const compiled = parseSourcePlan(normalized.value, source);
+    expect(compiled.ok, JSON.stringify(compiled)).toBe(true);
+    if (!compiled.ok) return;
+    const [opening, afterA, afterB] = compiled.plan.progression;
+    expect(opening.role).toBe("dialogue");
+    expect(afterA.role).toBe("dialogue");
+    expect(afterB.role).toBe("dialogue");
+    if (opening.role !== "dialogue" || afterA.role !== "dialogue" || afterB.role !== "dialogue") return;
+    expect(opening.choices.map(choice => choice.nextSceneId)).toEqual(["follow-a", "follow-b"]);
+    expect(afterA.choices.map(choice => choice.nextSceneId)).toEqual(["end-aa", "end-ab"]);
+    expect(afterB.choices.map(choice => choice.nextSceneId)).toEqual(["end-ba", "end-bb"]);
+    expect(compiled.simulation).toMatchObject({ endingSceneIds: expect.arrayContaining(["end-aa", "end-ab", "end-ba", "end-bb"]), longestChoicePath: 2 });
+  });
+  it("rejects missing slots, injected graph fields, foreign evidence, and empty decisions", () => {
+    const { source, plan } = specimen();
+    const authored = groqAuthoredPlanFixture(plan);
+    const bad = (edit: (copy: typeof authored) => void, diagnostic: string) => {
+      const copy = structuredClone(authored);
+      edit(copy);
+      expect(normalizeGroqModelPlan(copy, source)).toEqual({ ok: false, diagnostic });
+    };
+    bad(copy => { Reflect.deleteProperty(copy.scenes, "endingBB"); }, "plan.fact-slots.invalid");
+    bad(copy => { Object.assign(copy.scenes.opening.choiceA, { nextSceneId: "end-aa" }); }, "plan.fact-slots.invalid");
+    bad(copy => { copy.scenes.afterA.choiceA.evidenceSpanId = randomUUID(); }, "plan.evidence-unmatched-source");
+    bad(copy => { copy.scenes.opening.choiceB.text = copy.scenes.opening.choiceA.text; }, "plan.instructional-insufficiency");
+    bad(copy => { copy.scenes.afterB.text = copy.scenes.afterA.text; }, "plan.instructional-insufficiency");
+    bad(copy => { copy.scenes.afterA.choiceB.understanding = copy.scenes.afterA.choiceA.understanding; }, "plan.instructional-insufficiency");
+    expect(normalizeGroqModelPlan({ ...authored, instructionallyInsufficient: true, scenes: null,
+      insufficiencyReason: "The excerpts cannot support two source-specific decisions." }, source))
+      .toEqual({ ok: false, diagnostic: "plan.instructional-insufficiency" });
+  });
+  it("normalizes OpenAI's fixed slots without accepting arbitrary graph edges", () => {
+    const { source, plan } = specimen();
+    const authored = authoredPlanFixture(plan);
+    const normalized = normalizeAuthoredModelPlan(authored, source);
+    expect(normalized.ok).toBe(true);
+    if (normalized.ok) expect(parseSourcePlan(normalized.value, source).ok).toBe(true);
+    expect(normalizeAuthoredModelPlan({ ...authored, progression: plan.progression }, source))
+      .toMatchObject({ ok: false, diagnostic: "plan.authoring-invalid" });
   });
   it("requires independent rejection of unsupported narrative in the preserved live response", () => {
     const narrative = preservedPlan.progression.map(scene => scene.text).join(" ");

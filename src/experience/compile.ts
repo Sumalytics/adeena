@@ -177,12 +177,6 @@ function structureDiagnostics(plan: ExperiencePlan) {
       if (!ids.has(choice.nextSceneId)) diagnostics.push({ code: "scene.transition-missing", message: "A choice target is missing." });
     }
   }
-  const sceneText = plan.progression.map((scene) => scene.text).join("\n");
-  for (const fact of plan.facts) {
-    if (!sceneText.includes(fact.claim)) {
-      diagnostics.push({ code: "grounding.claim-omitted", message: "A source claim is missing from the scenes." });
-    }
-  }
   return diagnostics;
 }
 
