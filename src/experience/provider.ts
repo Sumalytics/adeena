@@ -5,6 +5,7 @@ import type { DialogueTarget } from "./edit";
 import { groqTransportSchema, mapGroqGraphTransport, mapGroqTransport, readGroqAssistantPayload } from "./groq-edit";
 import { groqStrictTransportSchema, normalizeGroqStrictOutput } from "./strict-transport";
 import { providerAttempt, safeProviderErrorCode, safeProviderRequestId, type ProviderAttemptDiagnostic } from "./provider-diagnostics";
+import { captureProviderResponse } from "./provider-response-capture";
 
 export const FIXTURE_PROVIDER = "deterministic-fixture" as const;
 export const CONFIGURED_PROVIDER = "configured-provider" as const;
@@ -407,6 +408,10 @@ export async function requestPaidEdit(input: {
   const body = await readResponseBody(response);
   const usage = readTokenUsage(body.parsed);
   const responseId = readResponseId(body.parsed);
+  if (input.structuredGeneration && input.env.ADEENA_CAPTURE_PROVIDER_RESPONSES === "local-mvp") {
+    try { captureProviderResponse(input.env, input.structuredGeneration.kind, body.raw); }
+    catch { /* Private debugging must not change provider failure classification or spending records. */ }
+  }
   if (!response.ok) {
     if (usage.reported) return complete(finish(spend, estimated, callCount, retryCount, usage, responseId, "provider-unavailable", null), response, body.parsed);
     const authRejected = response.status === 401 || response.status === 403;
@@ -415,12 +420,14 @@ export async function requestPaidEdit(input: {
     const code = authRejected ? "generation-unavailable" : billingRejected ? "budget-unavailable" : "provider-unavailable";
     return complete(charged(code, spend, estimated, callCount, retryCount, blankUsage(), unbilled ? "none" : "estimate", 0, unbilled, responseId), response, body.parsed);
   }
-  if (!body.parsed) return complete(charged("invalid-experience", spend, estimated, callCount, retryCount, blankUsage(), "estimate", 0, false, responseId), response, body.parsed);
+  if (!body.parsed) return complete({ ...charged("invalid-experience", spend, estimated, callCount, retryCount, blankUsage(), "estimate", 0, false, responseId), diagnostic: "response.body-invalid" }, response, body.parsed);
   if (input.structuredGeneration && (usage.inputTokens > tokenLimits.input || usage.outputTokens > tokenLimits.output)) return complete(finish(spend, estimated, callCount, retryCount, usage, responseId, "budget-unavailable", null), response, body.parsed);
   const content = readModelContent(body.parsed);
   if (input.structuredGeneration) {
+    const envelopeFailure = structuredContentFailure(content);
+    if (envelopeFailure) return complete({ ...finish(spend, estimated, callCount, retryCount, usage, responseId, "invalid-experience", null), diagnostic: envelopeFailure }, response, body.parsed);
     const normalized = normalizeGroqStrictOutput(content, input.structuredGeneration.schema);
-    if (!normalized.ok) return complete({ ...finish(spend, estimated, callCount, retryCount, usage, responseId, "invalid-experience", null), diagnostic: `schema.normalization: ${normalized.diagnostic}` }, response, body.parsed);
+    if (!normalized.ok) return complete({ ...finish(spend, estimated, callCount, retryCount, usage, responseId, "invalid-experience", null), diagnostic: `schema.normalization: ${normalized.diagnostic} at ${normalized.path}` }, response, body.parsed);
     return complete(finish(spend, estimated, callCount, retryCount, usage, responseId, null, normalized.value), response, body.parsed);
   }
   return complete(finish(spend, estimated, callCount, retryCount, usage, responseId, null, content), response, body.parsed);
@@ -711,11 +718,21 @@ function readModelContent(value: unknown) {
   if (texts.length !== 1) return { status: "invalid" };
   try {
     const parsed = JSON.parse(texts[0]?.trim() ?? "") as unknown;
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return { status: "invalid" };
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return { status: "invalid", reason: "json-invalid" };
     return parsed;
   } catch {
-    return { status: "invalid" };
+    return { status: "invalid", reason: "json-invalid" };
   }
+}
+
+function structuredContentFailure(content: unknown): string | null {
+  if (!content || typeof content !== "object" || Array.isArray(content)) return "response.envelope-invalid";
+  if (!("status" in content)) return null;
+  if (content.status === "invalid" && "reason" in content && content.reason === "json-invalid") return "response.json-invalid";
+  if (content.status === "incomplete") return "response.incomplete";
+  if (content.status === "refusal") return "response.refusal";
+  if (content.status === "failed") return "response.failed";
+  return "response.envelope-invalid";
 }
 
 function readOutcome(content: unknown) {
@@ -758,12 +775,13 @@ async function readResponseBody(response: Response) {
   try {
     text = await response.text();
   } catch {
-    return { parsed: null };
+    return { parsed: null, raw: null };
   }
-  if (!text || text.length > 20_000) return { parsed: null };
+  const raw = Buffer.byteLength(text, "utf8") <= 128_000 ? text : null;
+  if (!text || text.length > 20_000) return { parsed: null, raw };
   try {
-    return { parsed: JSON.parse(text) as unknown };
+    return { parsed: JSON.parse(text) as unknown, raw };
   } catch {
-    return { parsed: null };
+    return { parsed: null, raw };
   }
 }

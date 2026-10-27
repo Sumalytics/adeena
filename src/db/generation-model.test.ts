@@ -99,7 +99,7 @@ describe("durable model generation", () => {
     const workspaceId = randomUUID();
     await createWorkspace(sql, identity, { id: workspaceId, name: "Diagnostic test", workspaceType: "personal" });
     const actor = { sql, identity, workspaceId };
-    const { source } = specimen();
+    const { source, plan } = specimen();
     const store = createFilesystemObjectStore(root);
     const uploaded = await enqueueDurableSource({ ...actor, filename: "garden-diagnostic.md", bytes: Buffer.from(`# Rain garden\n\n${source.spans[0].excerpt} ${source.spans[0].excerpt} ${source.spans[0].excerpt}`), store, idempotencyKey: randomUUID() });
     await runExtractionOnce({ ...actor, store, leaseOwner: "diagnostic-test" });
@@ -143,5 +143,44 @@ describe("durable model generation", () => {
     expect(rejected.model_calls[0].attempts[0]).toMatchObject({ httpStatus: 401, category: "provider-auth-failure", billingCertainty: "confirmed-nonbillable" });
     const [afterRejection] = await admin`select reserved_micros from adeena_edit_spend where id='development'`;
     expect(afterRejection.reserved_micros).toBe(3300);
+
+    const malformedKey = randomUUID();
+    let malformedCalls = 0;
+    await expect(createPlayableExperience({ ...input, idempotencyKey: malformedKey, fetchImpl: (async () => {
+      malformedCalls++;
+      return Response.json({ id: "resp_malformed", status: "completed",
+        output: [{ type: "message", content: [{ type: "output_text", text: JSON.stringify({ secret: source.spans[0].excerpt }) }] }],
+        usage: { input_tokens: 500, output_tokens: 80 } });
+    }) as typeof fetch })).rejects.toMatchObject({ code: "invalid-experience" });
+    const [malformed] = await admin`select c.model_calls from experience_generation_costs c join experience_generation_jobs j on j.id=c.job_id where j.idempotency_key=${malformedKey}::uuid`;
+    expect(malformedCalls).toBe(1);
+    expect(malformed.model_calls[0].diagnostic).toEqual({ boundary: "transport-normalization", code: "transport.missing-field", path: "#/learnerObjective" });
+    expect(JSON.stringify(malformed.model_calls)).not.toContain(source.spans[0].excerpt);
+
+    const recordedFailure = async (responseFor: (context: { excerpts: { id: string }[]; allowedFacts: { claim: string; spanId: string }[] }) => unknown) => {
+      const key = randomUUID();
+      await expect(createPlayableExperience({ ...input, idempotencyKey: key, fetchImpl: (async (_url, init) => {
+        const request = JSON.parse(String(init?.body));
+        const userContent = Array.isArray(request.input) ? request.input.find((item: { role: string }) => item.role === "user")?.content : request.input;
+        const context = JSON.parse(userContent);
+        return Response.json({ id: "resp_rejected", status: "completed", output: responseFor(context),
+          usage: { input_tokens: 500, output_tokens: 80 } });
+      }) as typeof fetch })).rejects.toMatchObject({ code: "invalid-experience" });
+      const [row] = await admin`select c.model_calls from experience_generation_costs c join experience_generation_jobs j on j.id=c.job_id where j.idempotency_key=${key}::uuid`;
+      return row.model_calls[0].diagnostic;
+    };
+    expect(await recordedFailure(() => [])).toEqual({ boundary: "provider-envelope", code: "response.envelope-invalid", path: "#" });
+    const message = (value: unknown) => [{ type: "message", content: [{ type: "output_text", text: JSON.stringify(value) }] }];
+    expect(await recordedFailure(context => {
+      const authored = groqAuthoredPlanFixture(plan, context.excerpts[0].id);
+      authored.scenes.opening.choiceA.evidenceSpanId = "not-a-uuid";
+      return message(authored);
+    })).toEqual({ boundary: "trusted-authoring-schema", code: "invalid_format", path: "#/scenes/opening/choiceA/evidenceSpanId" });
+    expect(await recordedFailure(context => {
+      const authored = groqAuthoredPlanFixture(plan, context.excerpts[0].id);
+      const [first, second] = context.allowedFacts;
+      return message({ ...authored, fact1: { kind: "source", ...first }, fact2: { kind: "source", ...second },
+        instructionallyInsufficient: true, insufficiencyReason: "The source cannot support two distinct choices.", scenes: null });
+    })).toEqual({ boundary: "instructional-quality", code: "plan.instructional-insufficiency", path: "#" });
   });
 });

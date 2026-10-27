@@ -240,6 +240,17 @@ export function normalizeAuthoredModelPlan(content: unknown, source: GenerationS
   return normalizeAuthoredPlan(parsed.data, source);
 }
 
+function authoringDiagnostic(content: unknown, groq: boolean, fallback: string) {
+  if (fallback !== "plan.fact-slots.invalid" && fallback !== "plan.authoring-invalid") return fallback;
+  const parsed = (groq ? GroqModelPlan : AuthoredModelPlan).safeParse(content);
+  if (parsed.success) return fallback;
+  const issue = parsed.error.issues[0];
+  if (!issue) return fallback;
+  const path = issue.path.map(part => typeof part === "number" && Number.isSafeInteger(part) && part >= 0
+    ? String(part) : typeof part === "string" && /^[A-Za-z][A-Za-z0-9_-]{0,60}$/.test(part) ? part : null);
+  return `plan.authoring-schema: ${issue.code} at ${path.includes(null) ? "#" : `#/${path.join("/")}`}`;
+}
+
 function normalizeAuthoredPlan(content: z.infer<typeof AuthoredModelPlan>, source: GenerationSource): { ok: true; value: unknown } | { ok: false; diagnostic: string } {
   if (content.instructionallyInsufficient) return content.scenes === null && content.insufficiencyReason !== null
     ? { ok: false, diagnostic: "plan.instructional-insufficiency" }
@@ -293,5 +304,5 @@ export async function requestPlanStage(input: { kind: "plan" | "review"; jobId?:
   if (input.kind !== "plan" || !result.ok) return result;
   const normalized = groqPlan ? normalizeGroqModelPlan(result.content, input.source) : normalizeAuthoredModelPlan(result.content, input.source);
   return normalized.ok ? { ...result, content: normalized.value }
-    : { ...result, ok: false, code: "invalid-experience", diagnostic: normalized.diagnostic };
+    : { ...result, ok: false, code: "invalid-experience", diagnostic: authoringDiagnostic(result.content, groqPlan, normalized.diagnostic) };
 }

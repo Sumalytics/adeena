@@ -121,6 +121,10 @@ export function inspectGroqStrictSchema(schema: unknown): CompatibilityIssue[] {
   return issues;
 }
 
+class NormalizationError extends Error {
+  constructor(readonly code: string, readonly path: string) { super(code); }
+}
+
 function matchesVariant(value: unknown, schema: JsonSchema) {
   if (schema.type === "null") return value === null;
   if (schema.type === "array") return Array.isArray(value);
@@ -136,40 +140,63 @@ function matchesVariant(value: unknown, schema: JsonSchema) {
 }
 
 /** Null on an originally optional field means absent; empty strings/arrays remain present. */
-export function normalizeGroqStrictOutput(value: unknown, source: object): { ok: true; value: unknown } | { ok: false; diagnostic: string } {
-  function normalize(item: unknown, schema: JsonSchema, path: string): unknown {
+export function normalizeGroqStrictOutput(value: unknown, source: object): { ok: true; value: unknown } | { ok: false; diagnostic: string; path: string } {
+  const root = source as JsonSchema;
+  function fail(code: string, path: string): never { throw new NormalizationError(code, path); }
+  function resolve(schema: JsonSchema, path: string): JsonSchema {
+    const seen = new Set<string>();
+    while (typeof schema.$ref === "string") {
+      const ref = schema.$ref;
+      if (!ref.startsWith("#/$defs/") || seen.has(ref)) fail("transport.reference-invalid", path);
+      seen.add(ref);
+      let target: unknown = root;
+      for (const encoded of ref.slice(2).split("/")) {
+        const key = encoded.replaceAll("~1", "/").replaceAll("~0", "~");
+        if (!object(target) || !Object.hasOwn(target, key)) fail("transport.reference-unresolved", path);
+        target = target[key];
+      }
+      if (!object(target)) fail("transport.reference-unresolved", path);
+      schema = target;
+    }
+    return schema;
+  }
+  function normalize(item: unknown, original: JsonSchema, path: string, depth = 0): unknown {
+    if (depth > 32) fail("transport.schema-too-deep", path);
+    const schema = resolve(original, path);
     const variants = Array.isArray(schema.oneOf) ? schema.oneOf : Array.isArray(schema.anyOf) ? schema.anyOf : null;
     if (variants) {
-      const selected = variants.map(record).filter(variant => matchesVariant(item, variant));
-      if (selected.length !== 1) throw new Error(`${path}: ambiguous union`);
-      return normalize(item, selected[0], path);
+      const selected = variants.map(record).filter(variant => matchesVariant(item, resolve(variant, path)));
+      if (selected.length !== 1) fail("transport.union-unmatched-or-ambiguous", path);
+      return normalize(item, selected[0], path, depth + 1);
     }
     if (schema.type === "array") {
-      if (!Array.isArray(item)) throw new Error(`${path}: expected array`);
-      return item.map((entry, index) => normalize(entry, record(schema.items), `${path}/${index}`));
+      if (!Array.isArray(item)) fail("transport.expected-array", path);
+      return item.map((entry, index) => normalize(entry, record(schema.items), `${path}/${index}`, depth + 1));
     }
     if (schema.type !== "object") return item;
     if (object(schema.additionalProperties) && !object(schema.properties)) {
-      if (!Array.isArray(item)) throw new Error(`${path}: expected record entries`);
+      if (!Array.isArray(item)) fail("transport.expected-record-entries", path);
       const result: Record<string, unknown> = Object.create(null);
       for (const entry of item) {
-        if (!object(entry) || Object.keys(entry).sort().join(",") !== "key,value" || typeof entry.key !== "string" || Object.hasOwn(result, entry.key)) throw new Error(`${path}: invalid or duplicate record entry`);
-        result[entry.key] = normalize(entry.value, schema.additionalProperties, `${path}/${entry.key}`);
+        if (!object(entry) || Object.keys(entry).sort().join(",") !== "key,value" || typeof entry.key !== "string" || Object.hasOwn(result, entry.key)) fail("transport.invalid-record-entry", path);
+        result[entry.key] = normalize(entry.value, schema.additionalProperties, path, depth + 1);
       }
       return result;
     }
-    if (!object(item)) throw new Error(`${path}: expected object`);
+    if (!object(item)) fail("transport.expected-object", path);
     const properties = record(schema.properties);
     const required = Array.isArray(schema.required) ? schema.required : [];
     const result: Record<string, unknown> = Object.create(null);
     for (const [key, field] of Object.entries(properties)) {
-      if (!Object.hasOwn(item, key)) throw new Error(`${path}/${key}: missing transport field`);
+      if (!Object.hasOwn(item, key)) fail("transport.missing-field", `${path}/${key}`);
       if (!required.includes(key) && item[key] === null) continue;
-      result[key] = normalize(item[key], record(field), `${path}/${key}`);
+      result[key] = normalize(item[key], record(field), `${path}/${key}`, depth + 1);
     }
-    for (const key of Object.keys(item)) if (!Object.hasOwn(properties, key)) throw new Error(`${path}/${key}: unknown transport field`);
+    for (const key of Object.keys(item)) if (!Object.hasOwn(properties, key)) fail("transport.unknown-field", path);
     return result;
   }
   try { return { ok: true, value: normalize(value, source as JsonSchema, "#") }; }
-  catch (error) { return { ok: false, diagnostic: error instanceof Error ? error.message : "transport normalization failed" }; }
+  catch (error) { return error instanceof NormalizationError
+    ? { ok: false, diagnostic: error.code, path: error.path }
+    : { ok: false, diagnostic: "transport.normalization-failed", path: "#" }; }
 }

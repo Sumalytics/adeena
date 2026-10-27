@@ -2,7 +2,8 @@ import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import { compileExperiencePlan } from "./compile";
 import { specimen } from "./model-plan.examples";
-import { groqModelPlanSchema, PlanReview, requestPlanStage } from "./model-plan";
+import { groqAuthoredPlanFixture } from "./model-plan.test-transport";
+import { GroqModelPlan, groqModelPlanSchema, normalizeGroqModelPlan, PlanReview, requestPlanStage } from "./model-plan";
 import { GENERATION_LIMITS, GROQ_COMMERCIAL_PRICE, GROQ_GPT_OSS_120B_MODEL, GROQ_RESPONSES_URL, OPENAI_GPT_54_MINI_PRICE, requestPaidEdit, serializedRequestBudget } from "./provider";
 import { groqStrictTransportSchema, inspectGroqStrictSchema, normalizeGroqStrictOutput } from "./strict-transport";
 import { VisualDirectorReviewV1, visualProposalSchema, type VisualDirectorInput } from "./visual-director/model-plan";
@@ -105,6 +106,59 @@ describe("Groq strict transport", () => {
     expect(normalizeGroqStrictOutput({ id: "x", label: "" }, source)).toEqual({ ok: true, value: { id: "x", label: "" } });
     expect(normalizeGroqStrictOutput({ id: "x" }, source)).toMatchObject({ ok: false });
     expect(normalizeGroqStrictOutput({ id: "x", label: null, injection: true }, source)).toMatchObject({ ok: false });
+    expect(normalizeGroqStrictOutput({ id: "x", label: null, "private source quotation": true }, source))
+      .toEqual({ ok: false, diagnostic: "transport.unknown-field", path: "#" });
+  });
+
+  it("resolves a non-null $ref branch inside anyOf before normalizing its fields", () => {
+    const source = { type: "object", additionalProperties: false, required: ["fact3"],
+      properties: { fact3: { anyOf: [{ $ref: "#/$defs/sourceFact" }, { type: "null" }] } },
+      $defs: { sourceFact: { type: "object", additionalProperties: false, required: ["kind", "spanId"],
+        properties: { kind: { type: "string" }, spanId: { type: "string" } } } } };
+    const fact = { kind: "source", spanId: "span-1" };
+    expect(normalizeGroqStrictOutput({ fact3: fact }, source)).toEqual({ ok: true, value: { fact3: fact } });
+    expect(normalizeGroqStrictOutput({ fact3: null }, source)).toEqual({ ok: true, value: { fact3: null } });
+    expect(normalizeGroqStrictOutput({ fact3: { kind: "source" } }, source)).toMatchObject({ ok: false });
+    expect(normalizeGroqStrictOutput({ fact3: { ...fact, extra: "unsafe" } }, source)).toMatchObject({ ok: false });
+    expect(normalizeGroqStrictOutput({ fact3: fact }, { ...source, $defs: {} }))
+      .toEqual({ ok: false, diagnostic: "transport.reference-unresolved", path: "#/fact3" });
+    expect(normalizeGroqStrictOutput({ fact3: fact }, { ...source, $defs: { sourceFact: { $ref: "#/$defs/sourceFact" } } }))
+      .toEqual({ ok: false, diagnostic: "transport.reference-invalid", path: "#/fact3" });
+  });
+
+  it("normalizes a third source fact through the actual seven-slot Groq schema", () => {
+    const { source, plan } = specimen();
+    const third = "A blue card signals the curtain to open.";
+    source.spans[0].excerpt += ` ${third}`;
+    const authored = groqAuthoredPlanFixture(plan);
+    authored.fact3 = { kind: "source", claim: third, spanId: source.spans[0].id };
+    const normalized = normalizeGroqStrictOutput(authored, groqModelPlanSchema(source));
+    expect(normalized.ok, JSON.stringify(normalized)).toBe(true);
+    if (!normalized.ok) return;
+    expect(GroqModelPlan.safeParse(normalized.value).success).toBe(true);
+    expect(normalizeGroqModelPlan(normalized.value, source)).toMatchObject({ ok: true, value: { facts: [authored.fact1, authored.fact2, authored.fact3] } });
+  });
+
+  it("classifies malformed or incomplete successful HTTP responses without exposing their text", async () => {
+    const env = { ADEENA_EXPERIENCE_PROVIDER: "configured-provider", ADEENA_AI_EXECUTION_MODE: "paid-development",
+      ADEENA_AI_API_KEY: "test-key", ADEENA_AI_MODEL: GROQ_GPT_OSS_120B_MODEL, ADEENA_AI_API_URL: GROQ_RESPONSES_URL,
+      ADEENA_AI_PRICE_VERSION: GROQ_COMMERCIAL_PRICE, ADEENA_AI_SPEND_CAP_USD: "1", ADEENA_AI_MAX_EDIT_COST_USD: "0.02",
+      ADEENA_AI_SPEND_AUTHORIZED: "development" };
+    const schema = { type: "object", additionalProperties: false, required: ["label"], properties: { label: { type: "string" } } };
+    const usage = { input_tokens: 10, output_tokens: 10 };
+    const cases = [
+      { body: { status: "completed", output: [], usage }, diagnostic: "response.envelope-invalid" },
+      { body: { status: "incomplete", output: [], usage }, diagnostic: "response.incomplete" },
+      { body: { status: "completed", output: [{ type: "message", content: [{ type: "output_text", text: "{" }] }], usage }, diagnostic: "response.json-invalid" },
+      { body: { status: "completed", output: [{ type: "message", content: [{ type: "output_text", text: "{}" }] }], usage }, diagnostic: "schema.normalization: transport.missing-field at #/label" },
+    ];
+    for (const { body, diagnostic } of cases) {
+      let calls = 0;
+      const result = await requestPaidEdit({ env, systemText: "safe", userText: "safe", structuredGeneration: { kind: "plan", schema },
+        fetchImpl: (async () => { calls++; return Response.json(body); }) as typeof fetch });
+      expect(result).toMatchObject({ ok: false, diagnostic, callCount: 1, retryCount: 0 });
+      expect(calls).toBe(1);
+    }
   });
 
   it("preserves discriminators and rejects duplicate dynamic-record entries", () => {

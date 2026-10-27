@@ -86,7 +86,10 @@ describe("postgresql source persistence", () => {
     admin = disposable.admin;
     sql = disposable.app;
     try {
-      await admin`select 1 as ok`;
+      const [database] = await admin`select current_database() as name`;
+      expect(database.name).toBe(TEST_DATABASE);
+      const [appDatabase] = await sql`select current_database() as name`;
+      expect(appDatabase.name).toBe(TEST_DATABASE);
       const session = await sql`
         select current_user as role, rolsuper, rolbypassrls
         from pg_roles
@@ -97,7 +100,8 @@ describe("postgresql source persistence", () => {
       if (error instanceof Error && error.name === "AssertionError") throw error;
       throw databaseFailure(error);
     }
-    await migrateDown(admin);
+    const [ledger] = await admin`select to_regclass('public.adeena_schema_migrations') as name`;
+    if (ledger.name) await migrateDown(admin);
     const first = await migrateUp(admin);
     expect(first.applied).toBe(true);
     ready = true;

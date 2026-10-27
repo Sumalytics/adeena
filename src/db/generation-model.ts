@@ -75,6 +75,7 @@ export async function generateModelPlan(input: Input): Promise<Compilation> {
       usageKind: result.usageKind, billingCertainty: result.attempts?.at(-1)?.billingCertainty ?? (result.callCount ? "unknown-external-charge" : "confirmed-nonbillable"),
       confirmedCostMicros: result.usageKind === "actual" ? result.actualCostMicros : result.releaseReservation || result.callCount === 0 ? 0 : null,
       estimatedPossibleCostMicros: result.releaseReservation || result.callCount === 0 ? 0 : result.usageKind === "actual" ? result.actualCostMicros : result.estimatedCostMicros,
+      ...(result.ok ? {} : { diagnostic: safeOperationalFailure(result) }),
       attempts: result.attempts ?? [], ...(result.content === undefined ? {} : stage === "review" ? { review: result.content } : { proposedPlan: result.content }) }));
     await workspace.tx`update experience_generation_costs set input_tokens=${total("inputTokens")},cached_input_tokens=${total("cachedInputTokens")},
       output_tokens=${total("outputTokens")},reasoning_tokens=${total("reasoningTokens")},call_count=${total("callCount")},retry_count=${total("retryCount")},
@@ -83,6 +84,19 @@ export async function generateModelPlan(input: Input): Promise<Compilation> {
       model_calls=${JSON.stringify(calls)}::jsonb where job_id=${input.jobId}::uuid and workspace_id=${input.workspaceId}::uuid`;
   });
   return outcome;
+}
+function safeOperationalFailure(result: PaidEditResult) {
+  const diagnostic = result.diagnostic ?? "";
+  const transport = /^schema\.normalization: (transport\.[a-z-]+) at (#[A-Za-z0-9/_-]*)$/.exec(diagnostic);
+  if (transport) return { boundary: "transport-normalization", code: transport[1], path: transport[2] };
+  const authoring = /^plan\.authoring-schema: ([a-z_]+) at (#[A-Za-z0-9/_-]*)$/.exec(diagnostic);
+  if (authoring) return { boundary: "trusted-authoring-schema", code: authoring[1], path: authoring[2] };
+  if (/^response\.(body-invalid|envelope-invalid|json-invalid|incomplete|refusal|failed)$/.test(diagnostic))
+    return { boundary: "provider-envelope", code: diagnostic, path: "#" };
+  if (/^plan\.[a-z-]+(?:\.[a-z-]+)?$/.test(diagnostic))
+    return { boundary: diagnostic === "plan.instructional-insufficiency" ? "instructional-quality" : "trusted-authoring-schema", code: diagnostic, path: "#" };
+  const category = result.attempts?.at(-1)?.category;
+  return { boundary: result.callCount > 0 ? "provider-response" : "admission", code: category ?? result.code ?? "provider-unavailable", path: "#" };
 }
 function providerFailure(result: PaidEditResult): Compilation {
   if (result.diagnostic === "plan.instructional-insufficiency")

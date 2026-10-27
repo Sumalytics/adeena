@@ -1,7 +1,11 @@
 import { redactDatabaseMessage } from "./env";
 import { openDatabase, type DatabaseClient } from "./client";
 
-export const TEST_DATABASE = "adeena_test";
+const requestedTestDatabase = process.env.ADEENA_TEST_DATABASE ?? "adeena_test";
+if (!/^adeena_test(?:_[a-z0-9_]+)?$/.test(requestedTestDatabase)) {
+  throw new Error("The disposable test database name was rejected.");
+}
+export const TEST_DATABASE = requestedTestDatabase;
 
 export function databaseName(url: string) {
   const match = /^postgres(?:ql)?:\/\/[^/]+\/([^/?]+)/i.exec(url);
@@ -35,7 +39,7 @@ export async function workspaceIds(url: string) {
   }
 }
 
-/** Opens adeena_test for integration tests. The developer database is not migrated. */
+/** Opens the selected disposable database for integration tests. The developer database is not migrated. */
 export async function openDisposableDatabases(adminUrl: string, applicationUrl: string) {
   if (databaseName(adminUrl) === TEST_DATABASE || databaseName(applicationUrl) === TEST_DATABASE) {
     throw new Error("The disposable test database must be separate from the developer database.");
